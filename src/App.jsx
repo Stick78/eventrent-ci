@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
-  PackageCheck, Printer, Wallet, Loader2, FileDown
+  PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -23,11 +23,12 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
 const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 
-// ---------- Génération du devis PDF ----------
+// ---------- Génération du devis PDF (personnalisable) ----------
 function generateQuotePDF(r, data) {
   if (!window.jspdf) { alert("La librairie PDF n'a pas pu se charger. Vérifie ta connexion et réessaie."); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
+  const settings = data.settings || { companyName: "EventRent CI", phone: "", footerText: "", logo: null };
   const zone = ZONES.find((z) => z.id === r.zone);
   const driver = data.drivers.find((d) => d.id === r.driverId);
   const subtotal = r.items.reduce((s, it) => s + it.qty * it.unit, 0);
@@ -39,30 +40,44 @@ function generateQuotePDF(r, data) {
   const docNumber = `DEV-${r.id.toString().slice(0, 8).toUpperCase()}`;
 
   // En-tête
+  const headerHeight = settings.phone ? 36 : 32;
   doc.setFillColor(20, 37, 30);
-  doc.rect(0, 0, 210, 32, "F");
+  doc.rect(0, 0, 210, headerHeight, "F");
+
+  let textX = 14;
+  if (settings.logo) {
+    try {
+      const match = settings.logo.match(/^data:image\/(png|jpe?g);base64,/i);
+      const format = match ? match[1].toUpperCase().replace("JPG", "JPEG") : "PNG";
+      doc.addImage(settings.logo, format, 14, 6, 22, 22);
+      textX = 40;
+    } catch (e) {
+      console.error("Impossible d'insérer le logo dans le PDF :", e);
+    }
+  }
+
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(20);
+  doc.setFontSize(18);
   doc.setFont(undefined, "bold");
-  doc.text("EventRent", 14, 18);
-  doc.setTextColor(201, 162, 39);
-  doc.text(" CI", 14 + doc.getTextWidth("EventRent"), 18);
-  doc.setFontSize(9);
+  doc.text(settings.companyName || "EventRent CI", textX, 17);
+  doc.setFontSize(8);
   doc.setFont(undefined, "normal");
   doc.setTextColor(200, 210, 205);
-  doc.text("Location de matériel événementiel — Côte d'Ivoire", 14, 25);
+  doc.text("Location de matériel événementiel — Côte d'Ivoire", textX, 23);
+  if (settings.phone) doc.text(`Tél : ${settings.phone}`, textX, 29);
 
-  doc.setTextColor(20, 25, 20);
+  doc.setTextColor(255, 255, 255);
   doc.setFontSize(14);
   doc.setFont(undefined, "bold");
-  doc.text("DEVIS", 196, 18, { align: "right" });
+  doc.text("DEVIS", 196, 15, { align: "right" });
   doc.setFontSize(9);
   doc.setFont(undefined, "normal");
-  doc.text(docNumber, 196, 24, { align: "right" });
-  doc.text(`Émis le ${fmtDate(todayISO())}`, 196, 29, { align: "right" });
+  doc.text(docNumber, 196, 21, { align: "right" });
+  doc.text(`Émis le ${fmtDate(todayISO())}`, 196, 26, { align: "right" });
 
   // Bloc client / commande
-  let y = 44;
+  let y = headerHeight + 12;
+  doc.setTextColor(20, 25, 20);
   doc.setFontSize(10);
   doc.setFont(undefined, "bold");
   doc.text("Client", 14, y);
@@ -132,7 +147,8 @@ function generateQuotePDF(r, data) {
   // Pied de page
   doc.setFontSize(8);
   doc.setTextColor(140, 140, 140);
-  doc.text("EventRent CI — Devis valable 15 jours à compter de la date d'émission.", 14, 285);
+  const footer = settings.footerText || "Devis valable 15 jours à compter de la date d'émission.";
+  doc.text(`${settings.companyName || "EventRent CI"} — ${footer}`, 14, 285);
   doc.text("Ce document ne constitue pas une facture.", 14, 290);
 
   doc.save(`${docNumber}-${(r.clientName || "client").replace(/\s+/g, "_")}.pdf`);
@@ -171,6 +187,7 @@ export default function App() {
     { id: "planning", label: "Planning", icon: CalendarDays },
     { id: "clients", label: "Clients", icon: Users },
     { id: "drivers", label: "Livreurs", icon: Truck },
+    { id: "settings", label: "Paramètres", icon: SettingsIcon },
   ];
 
   return (
@@ -218,6 +235,7 @@ export default function App() {
             {tab === "planning" && <Planning data={data} />}
             {tab === "clients" && <Clients data={data} run={run} />}
             {tab === "drivers" && <Drivers data={data} run={run} />}
+            {tab === "settings" && <SettingsPage data={data} run={run} busy={busy} />}
           </>
         )}
       </div>
@@ -617,5 +635,50 @@ function Drivers({ data, run }) {
       {f.type === "externe" && <Field label="Frais par course (FCFA)"><input type="number" style={inputStyle} value={f.fee} onChange={(e) => setF({ ...f, fee: e.target.value })} /></Field>}
       <Btn onClick={add}>Ajouter</Btn>
     </Modal>}
+  </div>;
+}
+
+// ---------- Settings (personnalisation devis) ----------
+function SettingsPage({ data, run, busy }) {
+  const [f, setF] = useState({ ...data.settings });
+  const [saved, setSaved] = useState(false);
+
+  const handleLogo = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setF((s) => ({ ...s, logo: reader.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const save = () => {
+    setSaved(false);
+    run(() => db.saveSettings(f)).then(() => setSaved(true));
+  };
+
+  return <div>
+    <SectionTitle>Paramètres — personnalisation du devis</SectionTitle>
+    <Card style={{ maxWidth: 480 }}>
+      <Field label="Nom de l'entreprise (en-tête du devis)">
+        <input style={inputStyle} value={f.companyName} onChange={(e) => { setF({ ...f, companyName: e.target.value }); setSaved(false); }} />
+      </Field>
+      <Field label="Téléphone / contact (affiché sous le nom)">
+        <input style={inputStyle} placeholder="Ex: +225 07 00 00 00 00" value={f.phone} onChange={(e) => { setF({ ...f, phone: e.target.value }); setSaved(false); }} />
+      </Field>
+      <Field label="Mention en pied de page">
+        <input style={inputStyle} value={f.footerText} onChange={(e) => { setF({ ...f, footerText: e.target.value }); setSaved(false); }} />
+      </Field>
+      <Field label="Logo (affiché en haut à gauche du devis)">
+        <input type="file" accept="image/*" onChange={handleLogo} style={{ fontSize: 12.5 }} />
+        {f.logo && <div style={{ marginTop: 10 }}>
+          <img src={f.logo} alt="Logo" style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 6, border: "1px solid #E9E6DE", background: "#fff", padding: 4 }} />
+          <div style={{ marginTop: 6 }}><Btn small variant="ghost" onClick={() => { setF({ ...f, logo: null }); setSaved(false); }}>Retirer le logo</Btn></div>
+        </div>}
+      </Field>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+        <Btn disabled={busy} onClick={save}>{busy ? "Enregistrement..." : "Enregistrer"}</Btn>
+        {saved && <span style={{ fontSize: 12.5, color: "#1F6F4B", fontWeight: 700 }}>✓ Enregistré</span>}
+      </div>
+    </Card>
   </div>;
 }
