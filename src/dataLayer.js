@@ -5,7 +5,7 @@ const mapInventory = (r) => ({
   id: r.id, name: r.name, category: r.category, total: r.total_qty,
   unit: Number(r.unit_price), low: r.low_stock_threshold, photo: r.photo_url,
 });
-const mapClient = (r) => ({ id: r.id, name: r.name, phone: r.phone, flagged: r.flagged, notes: r.notes || "" });
+const mapClient = (r) => ({ id: r.id, name: r.name, phone: r.phone, flagged: r.flagged, notes: r.notes || "", createdAt: r.created_at ? r.created_at.slice(0, 10) : null });
 const mapDriver = (r) => ({ id: r.id, name: r.name, phone: r.phone, type: r.type, fee: Number(r.fee_per_delivery) });
 const mapPack = (r) => ({ id: r.id, name: r.name, items: (r.pack_items || []).map((pi) => ({ itemId: pi.item_id, qty: pi.qty })) });
 const mapReservation = (r) => ({
