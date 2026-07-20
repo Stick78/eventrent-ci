@@ -357,32 +357,86 @@ function Modal({ title, onClose, children, width = 520 }) {
 // ---------- Dashboard ----------
 function Dashboard({ data }) {
   const monthKey = todayISO().slice(0, 7);
+  const prevMonthKey = useMemo(() => {
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+  }, []);
+
   const revenueMonth = useMemo(() => {
     let s = 0; data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === monthKey) s += p.amount; })); return s;
-  }, [data]);
+  }, [data, monthKey]);
+  const revenuePrevMonth = useMemo(() => {
+    let s = 0; data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === prevMonthKey) s += p.amount; })); return s;
+  }, [data, prevMonthKey]);
+  const revenueEvolution = revenuePrevMonth === 0
+    ? (revenueMonth > 0 ? 100 : 0)
+    : Math.round(((revenueMonth - revenuePrevMonth) / revenuePrevMonth) * 100);
+
   const upcoming = data.reservations.filter((r) => r.startDate >= todayISO() && r.status !== "Retourné").length;
   const onRent = data.reservations.filter((r) => r.status === "Livré").length;
   const lowStock = data.inventory.filter((i) => i.total <= i.low);
 
+  const newClientsThisMonth = data.clients.filter((c) => c.createdAt && c.createdAt.slice(0, 7) === monthKey).length;
+
+  const cautionsHeld = data.reservations
+    .filter((r) => r.status !== "Retourné" && r.caution > 0)
+    .reduce((s, r) => s + r.caution, 0);
+
+  const topItems = useMemo(() => {
+    const qtyByItem = {};
+    data.reservations.forEach((r) => r.items.forEach((it) => {
+      qtyByItem[it.name] = (qtyByItem[it.name] || 0) + it.qty;
+    }));
+    return Object.entries(qtyByItem).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [data]);
+
   return <div>
     <SectionTitle>Tableau de bord</SectionTitle>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 18 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 14 }}>
       <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>REVENUS DU MOIS</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{fmt(revenueMonth)}</div></Card>
       <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>RÉSERVATIONS À VENIR</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{upcoming}</div></Card>
       <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>MATÉRIEL EN LOCATION</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{onRent} commande(s)</div></Card>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 18 }}>
+      <Card>
+        <div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>ÉVOLUTION DES REVENUS</div>
+        <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6, color: revenueEvolution >= 0 ? "#1F6F4B" : "#B3261E" }}>
+          {revenueEvolution >= 0 ? "+" : ""}{revenueEvolution}%
+        </div>
+        <div style={{ fontSize: 11, color: "#8A857A", marginTop: 2 }}>vs mois précédent</div>
+      </Card>
+      <Card>
+        <div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>NOUVEAUX CLIENTS CE MOIS</div>
+        <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{newClientsThisMonth}</div>
+      </Card>
+      <Card>
+        <div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>CAUTIONS NON RESTITUÉES</div>
+        <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{fmt(cautionsHeld)}</div>
+      </Card>
     </div>
     {lowStock.length > 0 && <Card style={{ borderColor: "#F0DCA0", background: "#FEFAEF", marginBottom: 18 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700, color: "#9A6A00", marginBottom: 6 }}><AlertTriangle size={16} /> Stock faible</div>
       {lowStock.map((i) => <div key={i.id} style={{ fontSize: 13, marginBottom: 2 }}>{i.name} — {i.total} en stock (seuil {i.low})</div>)}
     </Card>}
-    <Card>
-      <div style={{ fontWeight: 800, marginBottom: 10 }}>Dernières réservations</div>
-      {data.reservations.slice(-5).reverse().map((r) => <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13.5 }}>
-        <span>{r.clientName} — {r.startDate}</span>
-        <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
-      </div>)}
-      {data.reservations.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune réservation pour l'instant.</div>}
-    </Card>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <Card>
+        <div style={{ fontWeight: 800, marginBottom: 10 }}>Dernières réservations</div>
+        {data.reservations.slice(-5).reverse().map((r) => <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13.5 }}>
+          <span>{r.clientName} — {r.startDate}</span>
+          <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
+        </div>)}
+        {data.reservations.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune réservation pour l'instant.</div>}
+      </Card>
+      <Card>
+        <div style={{ fontWeight: 800, marginBottom: 10 }}>Articles les plus loués</div>
+        {topItems.map(([name, qty], i) => <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13.5 }}>
+          <span>{i + 1}. {name}</span>
+          <b>{qty}×</b>
+        </div>)}
+        {topItems.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune donnée pour l'instant.</div>}
+      </Card>
+    </div>
   </div>;
 }
 
