@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
-  PackageCheck, Printer, Wallet, Loader2
+  PackageCheck, Printer, Wallet, Loader2, FileDown
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -21,6 +21,122 @@ const STATUS_COLORS = {
 };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
+const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
+
+// ---------- Génération du devis PDF ----------
+function generateQuotePDF(r, data) {
+  if (!window.jspdf) { alert("La librairie PDF n'a pas pu se charger. Vérifie ta connexion et réessaie."); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const zone = ZONES.find((z) => z.id === r.zone);
+  const driver = data.drivers.find((d) => d.id === r.driverId);
+  const subtotal = r.items.reduce((s, it) => s + it.qty * it.unit, 0);
+  const seasonalFee = r.seasonal ? subtotal * 0.2 : 0;
+  const zoneFee = zone?.fee || 0;
+  const total = subtotal + seasonalFee + zoneFee;
+  const paid = r.payments.reduce((s, p) => s + p.amount, 0);
+  const remaining = Math.max(total - paid, 0);
+  const docNumber = `DEV-${r.id.toString().slice(0, 8).toUpperCase()}`;
+
+  // En-tête
+  doc.setFillColor(20, 37, 30);
+  doc.rect(0, 0, 210, 32, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(20);
+  doc.setFont(undefined, "bold");
+  doc.text("EventRent", 14, 18);
+  doc.setTextColor(201, 162, 39);
+  doc.text(" CI", 14 + doc.getTextWidth("EventRent"), 18);
+  doc.setFontSize(9);
+  doc.setFont(undefined, "normal");
+  doc.setTextColor(200, 210, 205);
+  doc.text("Location de matériel événementiel — Côte d'Ivoire", 14, 25);
+
+  doc.setTextColor(20, 25, 20);
+  doc.setFontSize(14);
+  doc.setFont(undefined, "bold");
+  doc.text("DEVIS", 196, 18, { align: "right" });
+  doc.setFontSize(9);
+  doc.setFont(undefined, "normal");
+  doc.text(docNumber, 196, 24, { align: "right" });
+  doc.text(`Émis le ${fmtDate(todayISO())}`, 196, 29, { align: "right" });
+
+  // Bloc client / commande
+  let y = 44;
+  doc.setFontSize(10);
+  doc.setFont(undefined, "bold");
+  doc.text("Client", 14, y);
+  doc.setFont(undefined, "normal");
+  doc.text(r.clientName || "—", 14, y + 6);
+
+  doc.setFont(undefined, "bold");
+  doc.text("Période de location", 110, y);
+  doc.setFont(undefined, "normal");
+  doc.text(`${fmtDate(r.startDate)}  →  ${fmtDate(r.endDate)}`, 110, y + 6);
+
+  y += 16;
+  doc.setFont(undefined, "bold");
+  doc.text("Adresse de livraison", 14, y);
+  doc.setFont(undefined, "normal");
+  doc.text(r.address || "Non renseignée", 14, y + 6);
+  doc.text(`Zone : ${zone?.label || "—"}`, 14, y + 12);
+
+  doc.setFont(undefined, "bold");
+  doc.text("Livreur", 110, y);
+  doc.setFont(undefined, "normal");
+  doc.text(driver ? `${driver.name} (${driver.type === "externe" ? "freelance" : "interne"})` : "Non assigné", 110, y + 6);
+
+  // Tableau des articles
+  const rows = r.items.map((it) => [
+    it.name,
+    String(it.qty),
+    fmt(it.unit),
+    fmt(it.qty * it.unit),
+  ]);
+
+  doc.autoTable({
+    startY: y + 20,
+    head: [["Article", "Qté", "Prix unitaire", "Sous-total"]],
+    body: rows,
+    theme: "grid",
+    headStyles: { fillColor: [31, 111, 75], textColor: 255, fontStyle: "bold" },
+    styles: { fontSize: 9, cellPadding: 3 },
+    columnStyles: { 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" } },
+  });
+
+  let finalY = doc.lastAutoTable.finalY + 8;
+
+  const totalsLine = (label, value, bold) => {
+    doc.setFont(undefined, bold ? "bold" : "normal");
+    doc.setFontSize(bold ? 11 : 10);
+    doc.text(label, 140, finalY, { align: "right" });
+    doc.text(value, 196, finalY, { align: "right" });
+    finalY += bold ? 8 : 6;
+  };
+
+  totalsLine("Sous-total articles", fmt(subtotal), false);
+  if (r.seasonal) totalsLine("Majoration haute saison (+20%)", fmt(seasonalFee), false);
+  if (zoneFee > 0) totalsLine("Frais de livraison", fmt(zoneFee), false);
+  doc.setDrawColor(220, 220, 220);
+  doc.line(140, finalY - 2, 196, finalY - 2);
+  totalsLine("TOTAL", fmt(total), true);
+  totalsLine("Déjà payé", fmt(paid), false);
+  totalsLine("Reste à payer", fmt(remaining), true);
+
+  finalY += 4;
+  doc.setFontSize(9);
+  doc.setFont(undefined, "normal");
+  doc.setTextColor(90, 90, 90);
+  doc.text(`Caution demandée : ${fmt(r.caution)}`, 14, finalY);
+
+  // Pied de page
+  doc.setFontSize(8);
+  doc.setTextColor(140, 140, 140);
+  doc.text("EventRent CI — Devis valable 15 jours à compter de la date d'émission.", 14, 285);
+  doc.text("Ce document ne constitue pas une facture.", 14, 290);
+
+  doc.save(`${docNumber}-${(r.clientName || "client").replace(/\s+/g, "_")}.pdf`);
+}
 
 export default function App() {
   const [tab, setTab] = useState("dashboard");
@@ -381,7 +497,6 @@ function ReservationDetail({ data, run, id, onClose }) {
     const damagedTotal = Object.values(damagedByRiId).reduce((s, v) => s + (Number(v) || 0), 0) * 2000;
     run(() => db.closeCheckIn(r.id, damagedByRiId, r.caution - damagedTotal));
   };
-  const printQuote = () => window.print();
 
   return <Modal title={`Commande — ${r.clientName}`} onClose={onClose} width={620}>
     <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -395,7 +510,10 @@ function ReservationDetail({ data, run, id, onClose }) {
     </Card>
     <Card style={{ marginBottom: 12 }}>
       <div style={{ fontWeight: 800, marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
-        <span>Paiement</span><Printer size={16} onClick={printQuote} style={{ cursor: "pointer", color: "#5B564C" }} />
+        <span>Paiement</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: "#1F6F4B", cursor: "pointer" }} onClick={() => generateQuotePDF(r, data)}>
+          <FileDown size={15} /> Télécharger le devis PDF
+        </span>
       </div>
       <div style={{ fontSize: 13, marginBottom: 8 }}>Total : <b>{fmt(total)}</b> · Payé : <b style={{ color: paid >= total ? "#1F6F4B" : "#B3261E" }}>{fmt(paid)}</b> · Reste : <b>{fmt(Math.max(total - paid, 0))}</b></div>
       {r.payments.map((p) => <div key={p.id} style={{ fontSize: 12.5, color: "#5B564C" }}>• {fmt(p.amount)} — {p.mode} — {p.date}</div>)}
