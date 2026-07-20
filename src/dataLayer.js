@@ -37,6 +37,7 @@ const mapSettings = (r) => ({
   footerText: r.footer_text || "",
   logo: r.logo_base64 || null,
 });
+const mapUser = (r) => ({ id: r.id, name: r.name, username: r.username, permissions: r.permissions || {} });
 
 const RESERVATION_SELECT = `
   id, client_id, driver_id, start_date, end_date, address, zone, seasonal, status,
@@ -57,6 +58,7 @@ export async function fetchAll() {
   const errs = [inv, cli, drv, pks, res].filter((x) => x.error);
   if (errs.length) throw errs[0].error;
   const settings = await fetchSettings();
+  const users = await fetchUsers();
   return {
     inventory: inv.data.map(mapInventory),
     clients: cli.data.map(mapClient),
@@ -64,6 +66,7 @@ export async function fetchAll() {
     packs: pks.data.map(mapPack),
     reservations: res.data.map(mapReservation),
     settings,
+    users,
   };
 }
 
@@ -184,4 +187,46 @@ export async function saveSettings(settings) {
     const { error } = await supabase.from("settings").insert(row);
     if (error) throw error;
   }
+}
+
+// ---------- users (gestion des accès) ----------
+export async function fetchUsers() {
+  try {
+    const { data, error } = await supabase.from("users").select("id, name, username, permissions").order("name");
+    if (error) throw error;
+    return data.map(mapUser);
+  } catch (e) {
+    console.error("Impossible de charger les utilisateurs (table 'users' absente ?) :", e);
+    return [];
+  }
+}
+
+export async function verifyLogin(username, password) {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, name, username, permissions")
+    .eq("username", username)
+    .eq("password", password)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapUser(data);
+}
+
+export async function createUser(user) {
+  const { error } = await supabase.from("users").insert({
+    name: user.name, username: user.username, password: user.password, permissions: user.permissions || {},
+  });
+  if (error) throw error;
+}
+
+export async function updateUser(user) {
+  const row = { name: user.name, username: user.username, permissions: user.permissions || {} };
+  if (user.password) row.password = user.password;
+  const { error } = await supabase.from("users").update(row).eq("id", user.id);
+  if (error) throw error;
+}
+
+export async function deleteUser(id) {
+  const { error } = await supabase.from("users").delete().eq("id", id);
+  if (error) throw error;
 }
