@@ -211,19 +211,31 @@ function Inventory({ data, run, busy }) {
 function ItemModal({ item, onClose, onSave }) {
   const [f, setF] = useState({ name: "", category: "", total: 0, unit: 0, low: 1, photo: null, ...item });
   const handlePhoto = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setF((s) => ({ ...s, photo: reader.result })); reader.readAsDataURL(file); };
+  const handleNumber = (field) => (e) => {
+    const v = e.target.value;
+    setF((s) => ({ ...s, [field]: v === "" ? "" : v.replace(/^0+(?=\d)/, "") }));
+  };
+  const save = () => {
+    onSave({
+      ...f,
+      total: parseInt(f.total, 10) || 0,
+      unit: parseInt(f.unit, 10) || 0,
+      low: parseInt(f.low, 10) || 0,
+    });
+  };
   return <Modal title={item.id ? "Modifier l'article" : "Nouvel article"} onClose={onClose}>
     <Field label="Nom"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
     <Field label="Catégorie"><input style={inputStyle} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Quantité totale"><input type="number" style={inputStyle} value={f.total} onChange={(e) => setF({ ...f, total: +e.target.value })} /></Field>
-      <Field label="Prix unitaire / jour (FCFA)"><input type="number" style={inputStyle} value={f.unit} onChange={(e) => setF({ ...f, unit: +e.target.value })} /></Field>
+      <Field label="Quantité totale"><input type="number" style={inputStyle} value={f.total} onChange={handleNumber("total")} /></Field>
+      <Field label="Prix unitaire / jour (FCFA)"><input type="number" style={inputStyle} value={f.unit} onChange={handleNumber("unit")} /></Field>
     </div>
-    <Field label="Seuil d'alerte stock faible"><input type="number" style={inputStyle} value={f.low} onChange={(e) => setF({ ...f, low: +e.target.value })} /></Field>
+    <Field label="Seuil d'alerte stock faible"><input type="number" style={inputStyle} value={f.low} onChange={handleNumber("low")} /></Field>
     <Field label="Photo">
       <input type="file" accept="image/*" onChange={handlePhoto} style={{ fontSize: 12.5 }} />
       {f.photo && <img src={f.photo} alt="" style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6, marginTop: 8 }} />}
     </Field>
-    <Btn onClick={() => onSave(f)}>Enregistrer</Btn>
+    <Btn onClick={save}>Enregistrer</Btn>
   </Modal>;
 }
 
