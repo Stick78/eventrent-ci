@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
-  PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon
+  PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
+  UserCog, BarChart3, LogOut
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -19,9 +20,21 @@ const STATUS_COLORS = {
   "Livré": { bg: "#DFF0E8", fg: "#1F6F4B" },
   "Retourné": { bg: "#EAE8E2", fg: "#5B564C" },
 };
+const MODULES = [
+  { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
+  { id: "bilan", label: "Bilan", icon: BarChart3 },
+  { id: "inventory", label: "Inventaire", icon: Package },
+  { id: "reservations", label: "Réservations", icon: CalendarDays },
+  { id: "planning", label: "Planning", icon: CalendarDays },
+  { id: "clients", label: "Clients", icon: Users },
+  { id: "drivers", label: "Livreurs", icon: Truck },
+  { id: "settings", label: "Paramètres", icon: SettingsIcon },
+  { id: "users", label: "Utilisateurs", icon: UserCog },
+];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
 const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
+const reservationTotal = (r) => r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
 
 // ---------- Génération du devis PDF (personnalisable) ----------
 function generateQuotePDF(r, data) {
@@ -39,7 +52,6 @@ function generateQuotePDF(r, data) {
   const remaining = Math.max(total - paid, 0);
   const docNumber = `DEV-${r.id.toString().slice(0, 8).toUpperCase()}`;
 
-  // En-tête
   const headerHeight = settings.phone ? 36 : 32;
   doc.setFillColor(20, 37, 30);
   doc.rect(0, 0, 210, headerHeight, "F");
@@ -75,7 +87,6 @@ function generateQuotePDF(r, data) {
   doc.text(docNumber, 196, 21, { align: "right" });
   doc.text(`Émis le ${fmtDate(todayISO())}`, 196, 26, { align: "right" });
 
-  // Bloc client / commande
   let y = headerHeight + 12;
   doc.setTextColor(20, 25, 20);
   doc.setFontSize(10);
@@ -101,14 +112,7 @@ function generateQuotePDF(r, data) {
   doc.setFont(undefined, "normal");
   doc.text(driver ? `${driver.name} (${driver.type === "externe" ? "freelance" : "interne"})` : "Non assigné", 110, y + 6);
 
-  // Tableau des articles
-  const rows = r.items.map((it) => [
-    it.name,
-    String(it.qty),
-    fmt(it.unit),
-    fmt(it.qty * it.unit),
-  ]);
-
+  const rows = r.items.map((it) => [it.name, String(it.qty), fmt(it.unit), fmt(it.qty * it.unit)]);
   doc.autoTable({
     startY: y + 20,
     head: [["Article", "Qté", "Prix unitaire", "Sous-total"]],
@@ -120,7 +124,6 @@ function generateQuotePDF(r, data) {
   });
 
   let finalY = doc.lastAutoTable.finalY + 8;
-
   const totalsLine = (label, value, bold) => {
     doc.setFont(undefined, bold ? "bold" : "normal");
     doc.setFontSize(bold ? 11 : 10);
@@ -128,7 +131,6 @@ function generateQuotePDF(r, data) {
     doc.text(value, 196, finalY, { align: "right" });
     finalY += bold ? 8 : 6;
   };
-
   totalsLine("Sous-total articles", fmt(subtotal), false);
   if (r.seasonal) totalsLine("Majoration haute saison (+20%)", fmt(seasonalFee), false);
   if (zoneFee > 0) totalsLine("Frais de livraison", fmt(zoneFee), false);
@@ -144,7 +146,6 @@ function generateQuotePDF(r, data) {
   doc.setTextColor(90, 90, 90);
   doc.text(`Caution demandée : ${fmt(r.caution)}`, 14, finalY);
 
-  // Pied de page
   doc.setFontSize(8);
   doc.setTextColor(140, 140, 140);
   const footer = settings.footerText || "Devis valable 15 jours à compter de la date d'émission.";
@@ -154,17 +155,25 @@ function generateQuotePDF(r, data) {
   doc.save(`${docNumber}-${(r.clientName || "client").replace(/\s+/g, "_")}.pdf`);
 }
 
+// ---------- App ----------
 export default function App() {
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState("reservations");
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
       const d = await db.fetchAll();
       setData(d);
       setError(null);
+      const savedId = localStorage.getItem("eventrent_user_id");
+      if (savedId) {
+        const found = (d.users || []).find((u) => u.id === savedId);
+        if (found) setCurrentUser(found);
+        else localStorage.removeItem("eventrent_user_id");
+      }
     } catch (e) {
       console.error(e);
       setError(e.message || "Erreur de connexion à la base");
@@ -180,15 +189,47 @@ export default function App() {
     finally { setBusy(false); }
   };
 
-  const nav = [
-    { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
-    { id: "inventory", label: "Inventaire", icon: Package },
-    { id: "reservations", label: "Réservations", icon: CalendarDays },
-    { id: "planning", label: "Planning", icon: CalendarDays },
-    { id: "clients", label: "Clients", icon: Users },
-    { id: "drivers", label: "Livreurs", icon: Truck },
-    { id: "settings", label: "Paramètres", icon: SettingsIcon },
-  ];
+  const handleLogin = (user) => {
+    localStorage.setItem("eventrent_user_id", user.id);
+    setCurrentUser(user);
+  };
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("eventrent_user_id");
+    setCurrentUser(null);
+  }, []);
+
+  // Déconnexion automatique après 20 minutes d'inactivité
+  useEffect(() => {
+    if (!currentUser) return;
+    let timer;
+    const reset = () => { clearTimeout(timer); timer = setTimeout(handleLogout, 20 * 60 * 1000); };
+    const events = ["mousemove", "keydown", "click", "touchstart"];
+    events.forEach((ev) => window.addEventListener(ev, reset));
+    reset();
+    return () => { clearTimeout(timer); events.forEach((ev) => window.removeEventListener(ev, reset)); };
+  }, [currentUser, handleLogout]);
+
+  // Bascule vers le premier onglet accessible si l'onglet courant est interdit
+  useEffect(() => {
+    if (currentUser && !currentUser.permissions?.[tab]) {
+      const firstAllowed = MODULES.find((m) => currentUser.permissions?.[m.id]);
+      if (firstAllowed) setTab(firstAllowed.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
+
+  if (!data) {
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F7F5F1", color: "#8A857A", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+      <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement...
+    </div>;
+  }
+
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  const nav = MODULES.filter((m) => currentUser.permissions?.[m.id]);
+  const hasAccess = (id) => !!currentUser.permissions?.[id];
 
   return (
     <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: "#F7F5F1", minHeight: "100vh", color: "#1F2421", display: "flex" }}>
@@ -200,23 +241,31 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: #D8D4C8; border-radius: 4px; }
       `}</style>
 
-      <div style={{ width: 200, background: "#14251E", color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }}>
+      <div style={{ width: 200, background: "#14251E", color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "0 8px 20px 8px" }}>
           <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
           <div style={{ fontSize: 11, color: "#9BAFA4", marginTop: 2 }}>Connecté à Supabase</div>
         </div>
-        {nav.map((n) => {
-          const Icon = n.icon; const active = tab === n.id;
-          return (
-            <div key={n.id} onClick={() => setTab(n.id)} style={{
-              display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
-              background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
-              fontSize: 13.5, fontWeight: active ? 700 : 500,
-            }}>
-              <Icon size={16} /> {n.label}
-            </div>
-          );
-        })}
+        <div style={{ flex: 1 }}>
+          {nav.map((n) => {
+            const Icon = n.icon; const active = tab === n.id;
+            return (
+              <div key={n.id} onClick={() => setTab(n.id)} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
+                background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
+                fontSize: 13.5, fontWeight: active ? 700 : 500,
+              }}>
+                <Icon size={16} /> {n.label}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ borderTop: "1px solid #24382F", paddingTop: 12, marginTop: 12 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{currentUser.name}</div>
+          <div onClick={handleLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFA4", cursor: "pointer" }}>
+            <LogOut size={13} /> Déconnexion
+          </div>
+        </div>
       </div>
 
       <div style={{ flex: 1, padding: 24, maxWidth: 1100 }}>
@@ -225,22 +274,56 @@ export default function App() {
             ⚠ {error}
           </div>
         )}
-        {!data ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#8A857A" }}><Loader2 className="spin" size={18} /> Chargement des données...</div>
-        ) : (
-          <>
-            {tab === "dashboard" && <Dashboard data={data} />}
-            {tab === "inventory" && <Inventory data={data} run={run} busy={busy} />}
-            {tab === "reservations" && <Reservations data={data} run={run} busy={busy} />}
-            {tab === "planning" && <Planning data={data} />}
-            {tab === "clients" && <Clients data={data} run={run} />}
-            {tab === "drivers" && <Drivers data={data} run={run} />}
-            {tab === "settings" && <SettingsPage data={data} run={run} busy={busy} />}
-          </>
-        )}
+        {tab === "dashboard" && hasAccess("dashboard") && <Dashboard data={data} />}
+        {tab === "bilan" && hasAccess("bilan") && <Bilan data={data} />}
+        {tab === "inventory" && hasAccess("inventory") && <Inventory data={data} run={run} busy={busy} />}
+        {tab === "reservations" && hasAccess("reservations") && <Reservations data={data} run={run} busy={busy} />}
+        {tab === "planning" && hasAccess("planning") && <Planning data={data} />}
+        {tab === "clients" && hasAccess("clients") && <Clients data={data} run={run} />}
+        {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
+        {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
+        {tab === "users" && hasAccess("users") && <UsersPage data={data} run={run} currentUser={currentUser} />}
+        {nav.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
       </div>
     </div>
   );
+}
+
+// ---------- Connexion ----------
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if (!username || !password) return;
+    setError(""); setLoading(true);
+    try {
+      const user = await db.verifyLogin(username.trim(), password);
+      if (!user) { setError("Identifiants incorrects."); setLoading(false); return; }
+      onLogin(user);
+    } catch (e) {
+      console.error(e);
+      setError("Erreur de connexion. Réessaie.");
+      setLoading(false);
+    }
+  };
+
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F7F5F1", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320, border: "1px solid #E9E6DE" }}>
+      <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+      <div style={{ fontSize: 12.5, color: "#8A857A", marginBottom: 20 }}>Connexion</div>
+      <Field label="Nom d'utilisateur">
+        <input style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
+      </Field>
+      <Field label="Mot de passe">
+        <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      </Field>
+      {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+      <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
+    </div>
+  </div>;
 }
 
 // ---------- shared UI ----------
@@ -299,6 +382,62 @@ function Dashboard({ data }) {
         <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
       </div>)}
       {data.reservations.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune réservation pour l'instant.</div>}
+    </Card>
+  </div>;
+}
+
+// ---------- Bilan ----------
+function Bilan({ data }) {
+  const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
+  const [from, setFrom] = useState(firstOfMonth());
+  const [to, setTo] = useState(todayISO());
+
+  const reservationsInRange = data.reservations.filter((r) => r.startDate >= from && r.startDate <= to);
+  const allPaymentsInRange = [];
+  data.reservations.forEach((r) => r.payments.forEach((p) => { if (p.date >= from && p.date <= to) allPaymentsInRange.push(p); }));
+
+  const totalRevenue = allPaymentsInRange.reduce((s, p) => s + p.amount, 0);
+  const totalBilled = reservationsInRange.reduce((s, r) => s + reservationTotal(r), 0);
+  const totalOutstanding = Math.max(totalBilled - reservationsInRange.reduce((s, r) => s + r.payments.reduce((s2, p) => s2 + p.amount, 0), 0), 0);
+  const byMode = PAYMENT_MODES.map((mode) => ({ mode, total: allPaymentsInRange.filter((p) => p.mode === mode).reduce((s, p) => s + p.amount, 0) }));
+
+  return <div>
+    <SectionTitle>Bilan</SectionTitle>
+    <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
+      <Field label="Du"><input type="date" style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+      <Field label="Au"><input type="date" style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 18 }}>
+      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>REVENUS ENCAISSÉS</div><div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{fmt(totalRevenue)}</div></Card>
+      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>FACTURÉ (commandes créées sur la période)</div><div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{fmt(totalBilled)}</div></Card>
+      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>RESTE À PERCEVOIR</div><div style={{ fontSize: 22, fontWeight: 800, marginTop: 6, color: "#B3261E" }}>{fmt(totalOutstanding)}</div></Card>
+    </div>
+    <Card style={{ marginBottom: 18 }}>
+      <div style={{ fontWeight: 800, marginBottom: 10 }}>Encaissements par mode de paiement</div>
+      {byMode.map((b) => <div key={b.mode} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13 }}>
+        <span>{b.mode}</span><b>{fmt(b.total)}</b>
+      </div>)}
+    </Card>
+    <Card style={{ padding: 0 }}>
+      <div style={{ fontWeight: 800, padding: "14px 16px 0" }}>Réservations créées sur la période ({reservationsInRange.length})</div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 10 }}>
+        <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
+          {["Client", "Dates", "Statut", "Total", "Payé", "Reste"].map((h) => <th key={h} style={{ padding: "8px 12px", fontSize: 11, color: "#8A857A", fontWeight: 700 }}>{h}</th>)}
+        </tr></thead>
+        <tbody>{reservationsInRange.map((r) => {
+          const total = reservationTotal(r);
+          const paid = r.payments.reduce((s, p) => s + p.amount, 0);
+          return <tr key={r.id} style={{ borderTop: "1px solid #F0EEE7" }}>
+            <td style={{ padding: "8px 12px" }}>{r.clientName}</td>
+            <td style={{ padding: "8px 12px", color: "#5B564C" }}>{r.startDate} → {r.endDate}</td>
+            <td style={{ padding: "8px 12px" }}><Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} /></td>
+            <td style={{ padding: "8px 12px" }}>{fmt(total)}</td>
+            <td style={{ padding: "8px 12px", color: paid >= total ? "#1F6F4B" : "#B3261E" }}>{fmt(paid)}</td>
+            <td style={{ padding: "8px 12px" }}>{fmt(Math.max(total - paid, 0))}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+      {reservationsInRange.length === 0 && <div style={{ padding: 16, color: "#8A857A", fontSize: 13 }}>Aucune réservation sur cette période.</div>}
     </Card>
   </div>;
 }
@@ -387,7 +526,7 @@ function Reservations({ data, run, busy }) {
     </div>
     <div style={{ display: "grid", gap: 10 }}>
       {list.map((r) => {
-        const total = r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
+        const total = reservationTotal(r);
         const paid = r.payments.reduce((s, p) => s + p.amount, 0);
         return <Card key={r.id}>
           <div onClick={() => setOpenId(r.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
@@ -503,7 +642,7 @@ function ReservationDetail({ data, run, id, onClose }) {
   const [payMode, setPayMode] = useState("Espèces");
   const [damaged, setDamaged] = useState({});
   if (!r) return null;
-  const total = r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
+  const total = reservationTotal(r);
   const paid = r.payments.reduce((s, p) => s + p.amount, 0);
   const driver = data.drivers.find((d) => d.id === r.driverId);
 
@@ -681,4 +820,70 @@ function SettingsPage({ data, run, busy }) {
       </div>
     </Card>
   </div>;
+}
+
+// ---------- Utilisateurs (accès personnalisables) ----------
+function UsersPage({ data, run, currentUser }) {
+  const [modal, setModal] = useState(null);
+  const remove = (id) => {
+    if (id === currentUser.id) { alert("Tu ne peux pas supprimer ton propre compte."); return; }
+    if (confirm("Supprimer cet utilisateur ?")) run(() => db.deleteUser(id));
+  };
+  return <div>
+    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un utilisateur</Btn>}>Utilisateurs</SectionTitle>
+    <div style={{ display: "grid", gap: 10 }}>
+      {data.users.map((u) => <Card key={u.id}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 800 }}>{u.name} {u.id === currentUser.id && <Badge text="Toi" bg="#DCEAFB" fg="#1D5FA8" />}</div>
+            <div style={{ fontSize: 12.5, color: "#8A857A" }}>@{u.username}</div>
+            <div style={{ fontSize: 11.5, color: "#8A857A", marginTop: 4 }}>
+              Accès : {MODULES.filter((m) => u.permissions?.[m.id]).map((m) => m.label).join(", ") || "Aucun"}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(u)} />
+            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(u.id)} />
+          </div>
+        </div>
+      </Card>)}
+      {data.users.length === 0 && <Card><div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucun utilisateur (la table 'users' a-t-elle bien été créée dans Supabase ?)</div></Card>}
+    </div>
+    {modal !== null && <UserModal user={modal} onClose={() => setModal(null)} run={run} />}
+  </div>;
+}
+
+function UserModal({ user, onClose, run }) {
+  const defaultPerms = { dashboard: false, bilan: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
+  const [f, setF] = useState({ name: "", username: "", password: "", permissions: defaultPerms, ...user, permissions: { ...defaultPerms, ...(user.permissions || {}) } });
+  const [saving, setSaving] = useState(false);
+  const togglePerm = (id) => setF((s) => ({ ...s, permissions: { ...s.permissions, [id]: !s.permissions?.[id] } }));
+
+  const save = async () => {
+    if (!f.name || !f.username) return;
+    if (!f.id && !f.password) { alert("Un mot de passe est requis pour un nouvel utilisateur."); return; }
+    setSaving(true);
+    try {
+      await run(() => (f.id ? db.updateUser(f) : db.createUser(f)));
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  return <Modal title={user.id ? "Modifier l'utilisateur" : "Nouvel utilisateur"} onClose={onClose}>
+    <Field label="Nom complet"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+    <Field label="Nom d'utilisateur"><input style={inputStyle} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field>
+    <Field label={f.id ? "Nouveau mot de passe (laisser vide pour ne pas changer)" : "Mot de passe"}>
+      <input type="password" style={inputStyle} value={f.password || ""} onChange={(e) => setF({ ...f, password: e.target.value })} />
+    </Field>
+    <Field label="Modules accessibles">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        {MODULES.map((m) => (
+          <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={!!f.permissions?.[m.id]} onChange={() => togglePerm(m.id)} /> {m.label}
+          </label>
+        ))}
+      </div>
+    </Field>
+    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
+  </Modal>;
 }
