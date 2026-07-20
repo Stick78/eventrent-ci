@@ -30,6 +30,13 @@ const mapReservation = (r) => ({
   payments: (r.payments || []).map((p) => ({ id: p.id, amount: Number(p.amount), mode: p.mode, date: (p.paid_at || "").slice(0, 10) })),
   damaged: (r.reservation_items || []).filter((ri) => ri.damaged_qty > 0).map((ri) => ({ itemId: ri.item_id, qty: ri.damaged_qty })),
 });
+const mapSettings = (r) => ({
+  id: r.id,
+  companyName: r.company_name || "EventRent CI",
+  phone: r.phone || "",
+  footerText: r.footer_text || "",
+  logo: r.logo_base64 || null,
+});
 
 const RESERVATION_SELECT = `
   id, client_id, driver_id, start_date, end_date, address, zone, seasonal, status,
@@ -49,12 +56,14 @@ export async function fetchAll() {
   ]);
   const errs = [inv, cli, drv, pks, res].filter((x) => x.error);
   if (errs.length) throw errs[0].error;
+  const settings = await fetchSettings();
   return {
     inventory: inv.data.map(mapInventory),
     clients: cli.data.map(mapClient),
     drivers: drv.data.map(mapDriver),
     packs: pks.data.map(mapPack),
     reservations: res.data.map(mapReservation),
+    settings,
   };
 }
 
@@ -144,4 +153,35 @@ export async function closeCheckIn(reservationId, damagedByRiId, cautionReturned
     status: "Retourné", caution_returned: cautionReturned,
   }).eq("id", reservationId);
   if (error) throw error;
+}
+
+// ---------- settings (personnalisation devis) ----------
+export async function fetchSettings() {
+  try {
+    const { data, error } = await supabase.from("settings").select("*").limit(1).maybeSingle();
+    if (error || !data) {
+      return { id: null, companyName: "EventRent CI", phone: "", footerText: "Devis valable 15 jours à compter de la date d'émission.", logo: null };
+    }
+    return mapSettings(data);
+  } catch (e) {
+    console.error("Impossible de charger les paramètres (table 'settings' absente ?) :", e);
+    return { id: null, companyName: "EventRent CI", phone: "", footerText: "Devis valable 15 jours à compter de la date d'émission.", logo: null };
+  }
+}
+
+export async function saveSettings(settings) {
+  const row = {
+    company_name: settings.companyName,
+    phone: settings.phone,
+    footer_text: settings.footerText,
+    logo_base64: settings.logo,
+    updated_at: new Date().toISOString(),
+  };
+  if (settings.id) {
+    const { error } = await supabase.from("settings").update(row).eq("id", settings.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from("settings").insert(row);
+    if (error) throw error;
+  }
 }
