@@ -59,6 +59,8 @@ export async function fetchAll() {
   if (errs.length) throw errs[0].error;
   const settings = await fetchSettings();
   const users = await fetchUsers();
+  const additionalRevenues = await fetchAdditionalRevenues();
+  const expenses = await fetchExpenses();
   return {
     inventory: inv.data.map(mapInventory),
     clients: cli.data.map(mapClient),
@@ -67,6 +69,8 @@ export async function fetchAll() {
     reservations: res.data.map(mapReservation),
     settings,
     users,
+    additionalRevenues,
+    expenses,
   };
 }
 
@@ -277,5 +281,45 @@ export async function updateDriver(id, name, phone, type, fee) {
 export async function deleteDriver(id) {
   await supabase.from("reservations").update({ driver_id: null }).eq("driver_id", id);
   const { error } = await supabase.from("drivers").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---------- recettes additionnelles (hors location) ----------
+export async function fetchAdditionalRevenues() {
+  try {
+    const { data, error } = await supabase.from("additional_revenues").select("*").order("date", { ascending: false });
+    if (error) throw error;
+    return data.map((r) => ({ id: r.id, description: r.description, amount: Number(r.amount), category: r.category || "Autre", date: r.date }));
+  } catch (e) {
+    console.error("Impossible de charger les recettes additionnelles (table 'additional_revenues' absente ?) :", e);
+    return [];
+  }
+}
+export async function createAdditionalRevenue({ description, amount, category, date }) {
+  const { error } = await supabase.from("additional_revenues").insert({ description, amount, category: category || "Autre", date });
+  if (error) throw error;
+}
+export async function deleteAdditionalRevenue(id) {
+  const { error } = await supabase.from("additional_revenues").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---------- dépenses ----------
+export async function fetchExpenses() {
+  try {
+    const { data, error } = await supabase.from("expenses").select("*").order("date", { ascending: false });
+    if (error) throw error;
+    return data.map((r) => ({ id: r.id, description: r.description, amount: Number(r.amount), category: r.category || "Autre", date: r.date }));
+  } catch (e) {
+    console.error("Impossible de charger les dépenses (table 'expenses' absente ?) :", e);
+    return [];
+  }
+}
+export async function createExpense({ description, amount, category, date }) {
+  const { error } = await supabase.from("expenses").insert({ description, amount, category: category || "Autre", date });
+  if (error) throw error;
+}
+export async function deleteExpense(id) {
+  const { error } = await supabase.from("expenses").delete().eq("id", id);
   if (error) throw error;
 }
