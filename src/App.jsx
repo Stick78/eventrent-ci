@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp
+  UserCog, BarChart3, LogOut, TrendingUp, Receipt
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -23,6 +23,8 @@ const STATUS_COLORS = {
 const MODULES = [
   { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
   { id: "bilan", label: "Bilan", icon: BarChart3 },
+  { id: "revenues", label: "Recettes", icon: Wallet },
+  { id: "expenses", label: "Dépenses", icon: Receipt },
   { id: "inventory", label: "Inventaire", icon: Package },
   { id: "reservations", label: "Réservations", icon: CalendarDays },
   { id: "planning", label: "Planning", icon: CalendarDays },
@@ -289,6 +291,8 @@ export default function App() {
         )}
         {tab === "dashboard" && hasAccess("dashboard") && <Dashboard data={data} />}
         {tab === "bilan" && hasAccess("bilan") && <Bilan data={data} />}
+        {tab === "revenues" && hasAccess("revenues") && <Recettes data={data} run={run} busy={busy} />}
+        {tab === "expenses" && hasAccess("expenses") && <Depenses data={data} run={run} busy={busy} />}
         {tab === "inventory" && hasAccess("inventory") && <Inventory data={data} run={run} busy={busy} />}
         {tab === "reservations" && hasAccess("reservations") && <Reservations data={data} run={run} busy={busy} />}
         {tab === "planning" && hasAccess("planning") && <Planning data={data} />}
@@ -553,6 +557,140 @@ function Bilan({ data }) {
       {reservationsInRange.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune réservation sur cette période.</div>}
     </Card>
   </div>;
+}
+
+// ---------- Recettes ----------
+function Recettes({ data, run, busy }) {
+  const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
+  const [from, setFrom] = useState(firstOfMonth());
+  const [to, setTo] = useState(todayISO());
+  const [modal, setModal] = useState(false);
+
+  const rentalRevenues = [];
+  data.reservations.forEach((r) => r.payments.forEach((p) => {
+    if (p.date >= from && p.date <= to) rentalRevenues.push({ id: p.id, date: p.date, description: `Location — ${r.clientName}`, category: "Location", amount: p.amount, source: "location" });
+  }));
+  const manualRevenues = data.additionalRevenues.filter((r) => r.date >= from && r.date <= to).map((r) => ({ ...r, source: "manuel" }));
+  const all = [...rentalRevenues, ...manualRevenues].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const total = all.reduce((s, r) => s + r.amount, 0);
+
+  const removeManual = (id) => { if (confirm("Supprimer cette recette ?")) run(() => db.deleteAdditionalRevenue(id)); };
+
+  return <div>
+    <PageBanner icon={Wallet} title="Recettes" subtitle="Toutes les recettes encaissées, filtrables par date" />
+    <div style={{ display: "flex", gap: 14, marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+      <Field label="Du"><input type="date" style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+      <Field label="Au"><input type="date" style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+      <Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Ajouter une recette</Btn>
+    </div>
+    <Card style={{ marginBottom: 18, maxWidth: 320 }}>
+      <div style={{ fontSize: 12, color: TEXT_MUTED, fontWeight: 700 }}>TOTAL RECETTES (PÉRIODE)</div>
+      <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{fmt(total)}</div>
+    </Card>
+    <Card style={{ padding: 0 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
+          {["Date", "Description", "Catégorie", "Montant", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
+        </tr></thead>
+        <tbody>{all.map((r) => <tr key={`${r.source}-${r.id}`} style={{ borderTop: "1px solid #F0EEE7" }}>
+          <td style={{ padding: "10px 12px" }}>{fmtDate(r.date)}</td>
+          <td style={{ padding: "10px 12px" }}>{r.description}</td>
+          <td style={{ padding: "10px 12px" }}><Badge text={r.category} bg={r.source === "location" ? "#DFF0E8" : "#DCEAFB"} fg={r.source === "location" ? "#1F6F4B" : "#1D5FA8"} /></td>
+          <td style={{ padding: "10px 12px", fontWeight: 700 }}>{fmt(r.amount)}</td>
+          <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.source === "manuel" && <Trash2 size={14} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => removeManual(r.id)} />}</td>
+        </tr>)}</tbody>
+      </table>
+      {all.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune recette sur cette période.</div>}
+    </Card>
+    {modal && <RevenueModal onClose={() => setModal(false)} run={run} />}
+  </div>;
+}
+
+function RevenueModal({ onClose, run }) {
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState("Autre");
+  const [date, setDate] = useState(todayISO());
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!description || !amount) return;
+    setSaving(true);
+    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date })); onClose(); }
+    finally { setSaving(false); }
+  };
+  return <Modal title="Ajouter une recette" onClose={onClose}>
+    <Field label="Description"><input style={inputStyle} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Vente de matériel usagé" /></Field>
+    <Field label="Catégorie"><input style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ex: Vente, Prestation, Autre" /></Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Montant (FCFA)"><input type="number" style={inputStyle} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+      <Field label="Date"><input type="date" style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+    </div>
+    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
+  </Modal>;
+}
+
+// ---------- Dépenses ----------
+function Depenses({ data, run, busy }) {
+  const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
+  const [from, setFrom] = useState(firstOfMonth());
+  const [to, setTo] = useState(todayISO());
+  const [modal, setModal] = useState(false);
+
+  const list = data.expenses.filter((e) => e.date >= from && e.date <= to).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const total = list.reduce((s, e) => s + e.amount, 0);
+  const remove = (id) => { if (confirm("Supprimer cette dépense ?")) run(() => db.deleteExpense(id)); };
+
+  return <div>
+    <PageBanner icon={Receipt} title="Dépenses" subtitle="Toutes les dépenses, filtrables par date" />
+    <div style={{ display: "flex", gap: 14, marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+      <Field label="Du"><input type="date" style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+      <Field label="Au"><input type="date" style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+      <Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Ajouter une dépense</Btn>
+    </div>
+    <Card style={{ marginBottom: 18, maxWidth: 320 }}>
+      <div style={{ fontSize: 12, color: TEXT_MUTED, fontWeight: 700 }}>TOTAL DÉPENSES (PÉRIODE)</div>
+      <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6, color: "#B3261E" }}>{fmt(total)}</div>
+    </Card>
+    <Card style={{ padding: 0 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
+          {["Date", "Description", "Catégorie", "Montant", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
+        </tr></thead>
+        <tbody>{list.map((e) => <tr key={e.id} style={{ borderTop: "1px solid #F0EEE7" }}>
+          <td style={{ padding: "10px 12px" }}>{fmtDate(e.date)}</td>
+          <td style={{ padding: "10px 12px" }}>{e.description}</td>
+          <td style={{ padding: "10px 12px" }}><Badge text={e.category} bg="#FBEAE8" fg="#B3261E" /></td>
+          <td style={{ padding: "10px 12px", fontWeight: 700 }}>{fmt(e.amount)}</td>
+          <td style={{ padding: "10px 12px", textAlign: "right" }}><Trash2 size={14} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(e.id)} /></td>
+        </tr>)}</tbody>
+      </table>
+      {list.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune dépense sur cette période.</div>}
+    </Card>
+    {modal && <ExpenseModal onClose={() => setModal(false)} run={run} />}
+  </div>;
+}
+
+function ExpenseModal({ onClose, run }) {
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState("Autre");
+  const [date, setDate] = useState(todayISO());
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!description || !amount) return;
+    setSaving(true);
+    try { await run(() => db.createExpense({ description, amount: +amount, category, date })); onClose(); }
+    finally { setSaving(false); }
+  };
+  return <Modal title="Ajouter une dépense" onClose={onClose}>
+    <Field label="Description"><input style={inputStyle} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Carburant camion" /></Field>
+    <Field label="Catégorie"><input style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ex: Transport, Entretien, Salaires" /></Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Montant (FCFA)"><input type="number" style={inputStyle} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+      <Field label="Date"><input type="date" style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+    </div>
+    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
+  </Modal>;
 }
 
 // ---------- Inventory ----------
@@ -1094,7 +1232,7 @@ function UsersPage({ data, run, currentUser }) {
 }
 
 function UserModal({ user, onClose, run }) {
-  const defaultPerms = { dashboard: false, bilan: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
+  const defaultPerms = { dashboard: false, bilan: false, revenues: false, expenses: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
   const [f, setF] = useState({ name: "", username: "", password: "", permissions: defaultPerms, ...user, permissions: { ...defaultPerms, ...(user.permissions || {}) } });
   const [saving, setSaving] = useState(false);
   const togglePerm = (id) => setF((s) => ({ ...s, permissions: { ...s.permissions, [id]: !s.permissions?.[id] } }));
