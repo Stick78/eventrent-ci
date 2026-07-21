@@ -230,3 +230,52 @@ export async function deleteUser(id) {
   const { error } = await supabase.from("users").delete().eq("id", id);
   if (error) throw error;
 }
+
+// ---------- réservations : modification / suppression ----------
+export async function updateReservationInfo(reservationId, { startDate, endDate, address, zone, seasonal, driverId, caution }) {
+  const { error } = await supabase.from("reservations").update({
+    start_date: startDate, end_date: endDate, address, zone, seasonal,
+    driver_id: driverId || null, caution: caution || 0,
+  }).eq("id", reservationId);
+  if (error) throw error;
+}
+
+export async function updateReservationItems(reservationId, items) {
+  const { error: delErr } = await supabase.from("reservation_items").delete().eq("reservation_id", reservationId);
+  if (delErr) throw delErr;
+  if (items.length > 0) {
+    const rows = items.map((it) => ({ reservation_id: reservationId, item_id: it.itemId, qty: it.qty, unit_price: it.unit }));
+    const { error } = await supabase.from("reservation_items").insert(rows);
+    if (error) throw error;
+  }
+}
+
+export async function deleteReservation(reservationId) {
+  await supabase.from("payments").delete().eq("reservation_id", reservationId);
+  await supabase.from("reservation_items").delete().eq("reservation_id", reservationId);
+  const { error } = await supabase.from("reservations").delete().eq("id", reservationId);
+  if (error) throw error;
+}
+
+// ---------- clients : modification / suppression ----------
+export async function updateClient(id, name, phone) {
+  const { error } = await supabase.from("clients").update({ name, phone }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteClient(id) {
+  const { error } = await supabase.from("clients").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---------- livreurs : modification / suppression ----------
+export async function updateDriver(id, name, phone, type, fee) {
+  const { error } = await supabase.from("drivers").update({ name, phone, type, fee_per_delivery: fee || 0 }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteDriver(id) {
+  await supabase.from("reservations").update({ driver_id: null }).eq("driver_id", id);
+  const { error } = await supabase.from("drivers").delete().eq("id", id);
+  if (error) throw error;
+}
