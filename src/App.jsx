@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp, Receipt
+  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -446,6 +446,11 @@ function Dashboard({ data }) {
     ? (revenueMonth > 0 ? 100 : 0)
     : Math.round(((revenueMonth - revenuePrevMonth) / revenuePrevMonth) * 100);
 
+  const expensesMonth = useMemo(() => {
+    return data.expenses.filter((e) => (e.date || "").slice(0, 7) === monthKey).reduce((s, e) => s + e.amount, 0);
+  }, [data, monthKey]);
+  const grossMargin = revenueMonth - expensesMonth;
+
   const upcoming = data.reservations.filter((r) => r.startDate >= todayISO() && r.status !== "Retourné").length;
   const onRent = data.reservations.filter((r) => r.status === "Livré").length;
   const lowStock = data.inventory.filter((i) => i.total <= i.low);
@@ -466,10 +471,11 @@ function Dashboard({ data }) {
       <KpiCard icon={CalendarDays} label="Réservations à venir" value={upcoming} color="#7C5CFC" />
       <KpiCard icon={Package} label="Matériel en location" value={`${onRent} commande(s)`} color="#E0507B" />
     </div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 20 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 20 }}>
       <KpiCard icon={TrendingUp} label="Évolution des revenus" value={`${revenueEvolution >= 0 ? "+" : ""}${revenueEvolution}%`} sub="vs mois précédent" color="#2BA8C4" />
       <KpiCard icon={Users} label="Nouveaux clients ce mois" value={newClientsThisMonth} color="#E8A23D" />
       <KpiCard icon={ShieldAlert} label="Cautions non restituées" value={fmt(cautionsHeld)} color="#1F9D63" />
+      <KpiCard icon={PiggyBank} label="Marge brute (mois)" value={fmt(grossMargin)} sub="Recettes − Dépenses" color={grossMargin >= 0 ? "#1F9D63" : "#B3261E"} />
     </div>
 
     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginBottom: 20 }}>
