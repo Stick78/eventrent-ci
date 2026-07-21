@@ -237,7 +237,7 @@ export default function App() {
   const isAdmin = !!currentUser.permissions?.users;
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK }}>
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK, display: "flex" }}>
       <style>{`
         * { box-sizing: border-box; }
         button { font-family: inherit; cursor: pointer; }
@@ -246,46 +246,42 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: #D8D4C8; border-radius: 4px; }
       `}</style>
 
-      {/* Bandeau supérieur */}
-      <div style={{ background: NAVY, color: "#fff", padding: "14px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>ER</div>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 800, fontSize: 17 }}>EventRent CI</span>
-              <Badge text="CI" bg="#C9A227" fg="#1F2421" />
-              {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
-            </div>
-            <div style={{ fontSize: 11.5, color: "#9BAFC9", marginTop: 1 }}>Location de matériel événementiel</div>
+      {/* Menu latéral */}
+      <div style={{ width: 210, background: NAVY, color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "0 8px 20px 8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>ER</div>
+            <div style={{ fontWeight: 800, fontSize: 16 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
+          </div>
+          <div style={{ fontSize: 11, color: "#9BAFC9", marginTop: 6 }}>Connecté à Supabase</div>
+        </div>
+        <div style={{ flex: 1 }}>
+          {nav.map((n) => {
+            const Icon = n.icon; const active = tab === n.id;
+            return (
+              <div key={n.id} onClick={() => setTab(n.id)} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
+                background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
+                fontSize: 13.5, fontWeight: active ? 700 : 500,
+              }}>
+                <Icon size={16} /> {n.label}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ borderTop: "1px solid #24304F", paddingTop: 12, marginTop: 12 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{currentUser.name}</div>
+          <div onClick={handleLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", cursor: "pointer" }}>
+            <LogOut size={13} /> Déconnexion
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <span style={{ fontSize: 13, color: "#D7DCE8" }}>{currentUser.name}</span>
-          <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.12)", color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <LogOut size={13} /> Déconnexion
-          </button>
-        </div>
-      </div>
-
-      {/* Navigation horizontale */}
-      <div style={{ background: "#fff", borderBottom: `1px solid ${BORDER}`, padding: "0 20px", display: "flex", gap: 2, overflowX: "auto" }}>
-        {nav.map((n) => {
-          const Icon = n.icon; const active = tab === n.id;
-          return (
-            <div key={n.id} onClick={() => setTab(n.id)} style={{
-              display: "flex", alignItems: "center", gap: 7, padding: "13px 14px",
-              borderBottom: active ? "3px solid #1F6F4B" : "3px solid transparent",
-              color: active ? NAVY : TEXT_MUTED, fontWeight: active ? 800 : 600,
-              fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap",
-            }}>
-              <Icon size={15} /> {n.label}
-            </div>
-          );
-        })}
       </div>
 
       {/* Contenu */}
-      <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
+      <div style={{ flex: 1, padding: 24, maxWidth: 1100 }}>
         {error && (
           <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>
             ⚠ {error}
