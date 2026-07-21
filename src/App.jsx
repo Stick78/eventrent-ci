@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut
+  UserCog, BarChart3, LogOut, TrendingUp
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -31,10 +31,16 @@ const MODULES = [
   { id: "settings", label: "Paramètres", icon: SettingsIcon },
   { id: "users", label: "Utilisateurs", icon: UserCog },
 ];
+const NAVY = "#0F1B3D";
+const BG = "#F5F6FA";
+const BORDER = "#E5E7EB";
+const TEXT_MUTED = "#6B7280";
+const TEXT_DARK = "#111827";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
 const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const reservationTotal = (r) => r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
+const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
 // ---------- Génération du devis PDF (personnalisable) ----------
 function generateQuotePDF(r, data) {
@@ -198,7 +204,6 @@ export default function App() {
     setCurrentUser(null);
   }, []);
 
-  // Déconnexion automatique après 20 minutes d'inactivité
   useEffect(() => {
     if (!currentUser) return;
     let timer;
@@ -209,7 +214,6 @@ export default function App() {
     return () => { clearTimeout(timer); events.forEach((ev) => window.removeEventListener(ev, reset)); };
   }, [currentUser, handleLogout]);
 
-  // Bascule vers le premier onglet accessible si l'onglet courant est interdit
   useEffect(() => {
     if (currentUser && !currentUser.permissions?.[tab]) {
       const firstAllowed = MODULES.find((m) => currentUser.permissions?.[m.id]);
@@ -219,7 +223,7 @@ export default function App() {
   }, [currentUser]);
 
   if (!data) {
-    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F7F5F1", color: "#8A857A", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, color: TEXT_MUTED, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
       <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement...
     </div>;
   }
@@ -230,9 +234,10 @@ export default function App() {
 
   const nav = MODULES.filter((m) => currentUser.permissions?.[m.id]);
   const hasAccess = (id) => !!currentUser.permissions?.[id];
+  const isAdmin = !!currentUser.permissions?.users;
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: "#F7F5F1", minHeight: "100vh", color: "#1F2421", display: "flex" }}>
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK }}>
       <style>{`
         * { box-sizing: border-box; }
         button { font-family: inherit; cursor: pointer; }
@@ -241,34 +246,46 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: #D8D4C8; border-radius: 4px; }
       `}</style>
 
-      <div style={{ width: 200, background: "#14251E", color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "0 8px 20px 8px" }}>
-          <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
-          <div style={{ fontSize: 11, color: "#9BAFA4", marginTop: 2 }}>Connecté à Supabase</div>
-        </div>
-        <div style={{ flex: 1 }}>
-          {nav.map((n) => {
-            const Icon = n.icon; const active = tab === n.id;
-            return (
-              <div key={n.id} onClick={() => setTab(n.id)} style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
-                background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
-                fontSize: 13.5, fontWeight: active ? 700 : 500,
-              }}>
-                <Icon size={16} /> {n.label}
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ borderTop: "1px solid #24382F", paddingTop: 12, marginTop: 12 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{currentUser.name}</div>
-          <div onClick={handleLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFA4", cursor: "pointer" }}>
-            <LogOut size={13} /> Déconnexion
+      {/* Bandeau supérieur */}
+      <div style={{ background: NAVY, color: "#fff", padding: "14px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>ER</div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontWeight: 800, fontSize: 17 }}>EventRent CI</span>
+              <Badge text="CI" bg="#C9A227" fg="#1F2421" />
+              {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
+            </div>
+            <div style={{ fontSize: 11.5, color: "#9BAFC9", marginTop: 1 }}>Location de matériel événementiel</div>
           </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <span style={{ fontSize: 13, color: "#D7DCE8" }}>{currentUser.name}</span>
+          <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.12)", color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <LogOut size={13} /> Déconnexion
+          </button>
         </div>
       </div>
 
-      <div style={{ flex: 1, padding: 24, maxWidth: 1100 }}>
+      {/* Navigation horizontale */}
+      <div style={{ background: "#fff", borderBottom: `1px solid ${BORDER}`, padding: "0 20px", display: "flex", gap: 2, overflowX: "auto" }}>
+        {nav.map((n) => {
+          const Icon = n.icon; const active = tab === n.id;
+          return (
+            <div key={n.id} onClick={() => setTab(n.id)} style={{
+              display: "flex", alignItems: "center", gap: 7, padding: "13px 14px",
+              borderBottom: active ? "3px solid #1F6F4B" : "3px solid transparent",
+              color: active ? NAVY : TEXT_MUTED, fontWeight: active ? 800 : 600,
+              fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+              <Icon size={15} /> {n.label}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Contenu */}
+      <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
         {error && (
           <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>
             ⚠ {error}
@@ -283,7 +300,7 @@ export default function App() {
         {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
         {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
         {tab === "users" && hasAccess("users") && <UsersPage data={data} run={run} currentUser={currentUser} />}
-        {nav.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
+        {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
       </div>
     </div>
   );
@@ -310,10 +327,13 @@ function LoginScreen({ onLogin }) {
     }
   };
 
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F7F5F1", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
-    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320, border: "1px solid #E9E6DE" }}>
-      <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
-      <div style={{ fontSize: 12.5, color: "#8A857A", marginBottom: 20 }}>Connexion</div>
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff" }}>ER</div>
+        <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+      </div>
+      <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Connexion</div>
       <Field label="Nom d'utilisateur">
         <input style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
       </Field>
@@ -327,23 +347,23 @@ function LoginScreen({ onLogin }) {
 }
 
 // ---------- shared UI ----------
-function Card({ children, style }) { return <div style={{ background: "#fff", border: "1px solid #E9E6DE", borderRadius: 10, padding: 16, ...style }}>{children}</div>; }
+function Card({ children, style }) { return <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.03)", ...style }}>{children}</div>; }
 function SectionTitle({ children, action }) {
   return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
     <h2 style={{ margin: 0, fontSize: 19, fontWeight: 800 }}>{children}</h2>{action}
   </div>;
 }
 function Btn({ children, onClick, variant = "primary", small, icon: Icon, disabled }) {
-  const styles = { primary: { background: "#1F6F4B", color: "#fff" }, ghost: { background: "#F1EFE8", color: "#1F2421" }, danger: { background: "#FBEAE8", color: "#B3261E" }, gold: { background: "#C9A227", color: "#1F2421" } };
+  const styles = { primary: { background: "#1F6F4B", color: "#fff" }, ghost: { background: "#F1F2F6", color: TEXT_DARK }, danger: { background: "#FBEAE8", color: "#B3261E" }, gold: { background: "#C9A227", color: "#1F2421" } };
   return <button disabled={disabled} onClick={onClick} style={{ ...styles[variant], opacity: disabled ? 0.6 : 1, border: "none", borderRadius: 8, padding: small ? "6px 10px" : "9px 14px", fontSize: small ? 12.5 : 13.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
     {Icon && <Icon size={small ? 13 : 15} />} {children}
   </button>;
 }
-function Badge({ text, bg, fg }) { return <span style={{ background: bg, color: fg, fontSize: 11.5, fontWeight: 700, padding: "3px 9px", borderRadius: 999 }}>{text}</span>; }
+function Badge({ text, bg, fg }) { return <span style={{ background: bg, color: fg, fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999 }}>{text}</span>; }
 function Field({ label, children }) { return <div style={{ marginBottom: 12 }}><label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#5B564C", marginBottom: 5 }}>{label}</label>{children}</div>; }
-const inputStyle = { width: "100%", padding: "8px 10px", border: "1px solid #DAD6CB", borderRadius: 7, fontSize: 13.5, background: "#FCFBF8" };
+const inputStyle = { width: "100%", padding: "8px 10px", border: `1px solid ${BORDER}`, borderRadius: 7, fontSize: 13.5, background: "#FAFBFC" };
 function Modal({ title, onClose, children, width = 520 }) {
-  return <div style={{ position: "fixed", inset: 0, background: "rgba(20,25,20,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
+  return <div style={{ position: "fixed", inset: 0, background: "rgba(15,27,61,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
     <div style={{ background: "#fff", borderRadius: 12, width, maxWidth: "90vw", maxHeight: "85vh", overflowY: "auto", padding: 20 }} onClick={(e) => e.stopPropagation()}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <h3 style={{ margin: 0, fontSize: 16.5, fontWeight: 800 }}>{title}</h3>
@@ -354,11 +374,57 @@ function Modal({ title, onClose, children, width = 520 }) {
   </div>;
 }
 
+// ---------- Bandeau de section (style Station Service Grâce) ----------
+function PageBanner({ icon: Icon, title, subtitle }) {
+  return <div style={{ background: NAVY, color: "#fff", borderRadius: 12, padding: "20px 24px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+    {Icon && <Icon size={22} />}
+    <div>
+      <div style={{ fontWeight: 800, fontSize: 19 }}>{title}</div>
+      {subtitle && <div style={{ fontSize: 12.5, color: "#9BAFC9", marginTop: 2 }}>{subtitle}</div>}
+    </div>
+  </div>;
+}
+
+// ---------- Carte KPI colorée ----------
+function KpiCard({ icon: Icon, label, value, sub, color }) {
+  return <div style={{ background: "#fff", borderRadius: 10, borderLeft: `4px solid ${color}`, border: `1px solid ${BORDER}`, borderLeftWidth: 4, borderLeftColor: color, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.03)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+      <div style={{ width: 32, height: 32, borderRadius: 8, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Icon size={16} color={color} />
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+    </div>
+    <div style={{ fontSize: 21, fontWeight: 800, color: TEXT_DARK }}>{value}</div>
+    {sub && <div style={{ fontSize: 11.5, color: "#9CA3AF", marginTop: 2 }}>{sub}</div>}
+  </div>;
+}
+
+// ---------- Graphique barres (revenus quotidiens) ----------
+function DailyRevenueChart({ data }) {
+  const days = Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (29 - i)); return d.toISOString().slice(0, 10);
+  });
+  const revenueByDay = days.map((day) => {
+    let s = 0;
+    data.reservations.forEach((r) => r.payments.forEach((p) => { if (p.date === day) s += p.amount; }));
+    return { day, value: s };
+  });
+  const max = Math.max(...revenueByDay.map((d) => d.value), 1);
+  return <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 180, padding: "10px 4px 0" }}>
+    {revenueByDay.map((d) => (
+      <div key={d.day} title={`${fmtDate(d.day)} : ${fmt(d.value)}`} style={{
+        flex: 1, minWidth: 3, height: `${Math.max((d.value / max) * 100, 2)}%`,
+        background: d.value > 0 ? "#93B4E8" : "#EEF1F6", borderRadius: "3px 3px 0 0",
+      }} />
+    ))}
+  </div>;
+}
+
 // ---------- Dashboard ----------
 function Dashboard({ data }) {
+  const now = new Date();
   const monthKey = todayISO().slice(0, 7);
   const prevMonthKey = useMemo(() => {
-    const now = new Date();
     const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
   }, []);
@@ -376,49 +442,46 @@ function Dashboard({ data }) {
   const upcoming = data.reservations.filter((r) => r.startDate >= todayISO() && r.status !== "Retourné").length;
   const onRent = data.reservations.filter((r) => r.status === "Livré").length;
   const lowStock = data.inventory.filter((i) => i.total <= i.low);
-
   const newClientsThisMonth = data.clients.filter((c) => c.createdAt && c.createdAt.slice(0, 7) === monthKey).length;
-
-  const cautionsHeld = data.reservations
-    .filter((r) => r.status !== "Retourné" && r.caution > 0)
-    .reduce((s, r) => s + r.caution, 0);
+  const cautionsHeld = data.reservations.filter((r) => r.status !== "Retourné" && r.caution > 0).reduce((s, r) => s + r.caution, 0);
 
   const topItems = useMemo(() => {
     const qtyByItem = {};
-    data.reservations.forEach((r) => r.items.forEach((it) => {
-      qtyByItem[it.name] = (qtyByItem[it.name] || 0) + it.qty;
-    }));
+    data.reservations.forEach((r) => r.items.forEach((it) => { qtyByItem[it.name] = (qtyByItem[it.name] || 0) + it.qty; }));
     return Object.entries(qtyByItem).sort((a, b) => b[1] - a[1]).slice(0, 5);
   }, [data]);
 
   return <div>
-    <SectionTitle>Tableau de bord</SectionTitle>
+    <PageBanner icon={LayoutDashboard} title="Tableau de bord" subtitle={`EventRent CI · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}`} />
+
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 14 }}>
-      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>REVENUS DU MOIS</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{fmt(revenueMonth)}</div></Card>
-      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>RÉSERVATIONS À VENIR</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{upcoming}</div></Card>
-      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>MATÉRIEL EN LOCATION</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{onRent} commande(s)</div></Card>
+      <KpiCard icon={Wallet} label="Revenus du mois" value={fmt(revenueMonth)} color="#2F6FED" />
+      <KpiCard icon={CalendarDays} label="Réservations à venir" value={upcoming} color="#7C5CFC" />
+      <KpiCard icon={Package} label="Matériel en location" value={`${onRent} commande(s)`} color="#E0507B" />
     </div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 18 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 20 }}>
+      <KpiCard icon={TrendingUp} label="Évolution des revenus" value={`${revenueEvolution >= 0 ? "+" : ""}${revenueEvolution}%`} sub="vs mois précédent" color="#2BA8C4" />
+      <KpiCard icon={Users} label="Nouveaux clients ce mois" value={newClientsThisMonth} color="#E8A23D" />
+      <KpiCard icon={ShieldAlert} label="Cautions non restituées" value={fmt(cautionsHeld)} color="#1F9D63" />
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginBottom: 20 }}>
       <Card>
-        <div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>ÉVOLUTION DES REVENUS</div>
-        <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6, color: revenueEvolution >= 0 ? "#1F6F4B" : "#B3261E" }}>
-          {revenueEvolution >= 0 ? "+" : ""}{revenueEvolution}%
+        <div style={{ fontWeight: 800, marginBottom: 4 }}>Revenus encaissés (30 derniers jours)</div>
+        <DailyRevenueChart data={data} />
+      </Card>
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800, marginBottom: 10 }}>
+          <AlertTriangle size={15} color="#C9A227" /> Alertes stock
         </div>
-        <div style={{ fontSize: 11, color: "#8A857A", marginTop: 2 }}>vs mois précédent</div>
-      </Card>
-      <Card>
-        <div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>NOUVEAUX CLIENTS CE MOIS</div>
-        <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{newClientsThisMonth}</div>
-      </Card>
-      <Card>
-        <div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>CAUTIONS NON RESTITUÉES</div>
-        <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{fmt(cautionsHeld)}</div>
+        {lowStock.length === 0 && <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>Aucune alerte pour l'instant.</div>}
+        {lowStock.map((i) => <div key={i.id} style={{ fontSize: 12.5, padding: "6px 0", borderBottom: "1px solid #F0EEE7" }}>
+          <div style={{ fontWeight: 700 }}>{i.name}</div>
+          <div style={{ color: TEXT_MUTED }}>{i.total} en stock (seuil {i.low})</div>
+        </div>)}
       </Card>
     </div>
-    {lowStock.length > 0 && <Card style={{ borderColor: "#F0DCA0", background: "#FEFAEF", marginBottom: 18 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700, color: "#9A6A00", marginBottom: 6 }}><AlertTriangle size={16} /> Stock faible</div>
-      {lowStock.map((i) => <div key={i.id} style={{ fontSize: 13, marginBottom: 2 }}>{i.name} — {i.total} en stock (seuil {i.low})</div>)}
-    </Card>}
+
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <Card>
         <div style={{ fontWeight: 800, marginBottom: 10 }}>Dernières réservations</div>
@@ -426,7 +489,7 @@ function Dashboard({ data }) {
           <span>{r.clientName} — {r.startDate}</span>
           <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
         </div>)}
-        {data.reservations.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune réservation pour l'instant.</div>}
+        {data.reservations.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune réservation pour l'instant.</div>}
       </Card>
       <Card>
         <div style={{ fontWeight: 800, marginBottom: 10 }}>Articles les plus loués</div>
@@ -434,7 +497,7 @@ function Dashboard({ data }) {
           <span>{i + 1}. {name}</span>
           <b>{qty}×</b>
         </div>)}
-        {topItems.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune donnée pour l'instant.</div>}
+        {topItems.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune donnée pour l'instant.</div>}
       </Card>
     </div>
   </div>;
@@ -456,15 +519,15 @@ function Bilan({ data }) {
   const byMode = PAYMENT_MODES.map((mode) => ({ mode, total: allPaymentsInRange.filter((p) => p.mode === mode).reduce((s, p) => s + p.amount, 0) }));
 
   return <div>
-    <SectionTitle>Bilan</SectionTitle>
+    <PageBanner icon={BarChart3} title="Bilan" subtitle="Activité, recettes et réservations sur la période" />
     <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
       <Field label="Du"><input type="date" style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
       <Field label="Au"><input type="date" style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
     </div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 18 }}>
-      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>REVENUS ENCAISSÉS</div><div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{fmt(totalRevenue)}</div></Card>
-      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>FACTURÉ (commandes créées sur la période)</div><div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{fmt(totalBilled)}</div></Card>
-      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>RESTE À PERCEVOIR</div><div style={{ fontSize: 22, fontWeight: 800, marginTop: 6, color: "#B3261E" }}>{fmt(totalOutstanding)}</div></Card>
+      <KpiCard icon={Wallet} label="Revenus encaissés" value={fmt(totalRevenue)} color="#2F6FED" />
+      <KpiCard icon={FileDown} label="Facturé (période)" value={fmt(totalBilled)} color="#7C5CFC" />
+      <KpiCard icon={AlertTriangle} label="Reste à percevoir" value={fmt(totalOutstanding)} color="#E0507B" />
     </div>
     <Card style={{ marginBottom: 18 }}>
       <div style={{ fontWeight: 800, marginBottom: 10 }}>Encaissements par mode de paiement</div>
@@ -476,7 +539,7 @@ function Bilan({ data }) {
       <div style={{ fontWeight: 800, padding: "14px 16px 0" }}>Réservations créées sur la période ({reservationsInRange.length})</div>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 10 }}>
         <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
-          {["Client", "Dates", "Statut", "Total", "Payé", "Reste"].map((h) => <th key={h} style={{ padding: "8px 12px", fontSize: 11, color: "#8A857A", fontWeight: 700 }}>{h}</th>)}
+          {["Client", "Dates", "Statut", "Total", "Payé", "Reste"].map((h) => <th key={h} style={{ padding: "8px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
         </tr></thead>
         <tbody>{reservationsInRange.map((r) => {
           const total = reservationTotal(r);
@@ -491,7 +554,7 @@ function Bilan({ data }) {
           </tr>;
         })}</tbody>
       </table>
-      {reservationsInRange.length === 0 && <div style={{ padding: 16, color: "#8A857A", fontSize: 13 }}>Aucune réservation sur cette période.</div>}
+      {reservationsInRange.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune réservation sur cette période.</div>}
     </Card>
   </div>;
 }
@@ -509,7 +572,8 @@ function Inventory({ data, run, busy }) {
   const remove = (id) => { if (confirm("Supprimer cet article ?")) run(() => db.deleteInventoryItem(id)); };
 
   return <div>
-    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal({})}>Ajouter un article</Btn>}>Inventaire</SectionTitle>
+    <PageBanner icon={Package} title="Inventaire" subtitle="Articles, disponibilité et prix" />
+    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal({})}>Ajouter un article</Btn>}>&nbsp;</SectionTitle>
     <div style={{ marginBottom: 12, display: "flex", gap: 10, alignItems: "center" }}>
       <span style={{ fontSize: 12.5, fontWeight: 700, color: "#5B564C" }}>Vérifier disponibilité au :</span>
       <input type="date" value={checkDate} onChange={(e) => setCheckDate(e.target.value)} style={{ ...inputStyle, width: 160 }} />
@@ -517,7 +581,7 @@ function Inventory({ data, run, busy }) {
     <Card style={{ padding: 0 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
         <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
-          {["Article", "Catégorie", "Stock total", "Dispo (date choisie)", "Prix/jour", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11.5, color: "#8A857A", fontWeight: 700 }}>{h}</th>)}
+          {["Article", "Catégorie", "Stock total", "Dispo (date choisie)", "Prix/jour", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11.5, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
         </tr></thead>
         <tbody>{data.inventory.map((i) => { const avail = availability(i); return <tr key={i.id} style={{ borderTop: "1px solid #F0EEE7" }}>
           <td style={{ padding: "10px 12px", fontWeight: 600 }}>{i.name}</td>
@@ -574,7 +638,8 @@ function Reservations({ data, run, busy }) {
   const list = data.reservations.filter((r) => filter === "Tous" || r.status === filter).slice().reverse();
 
   return <div>
-    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Nouvelle commande (saisie manuelle)</Btn>}>Réservations</SectionTitle>
+    <PageBanner icon={CalendarDays} title="Réservations" subtitle="Commandes et suivi des paiements" />
+    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Nouvelle commande (saisie manuelle)</Btn>}>&nbsp;</SectionTitle>
     <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
       {["Tous", ...STATUS_FLOW].map((s) => <div key={s} onClick={() => setFilter(s)} style={{ padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: filter === s ? "#1F6F4B" : "#F1EFE8", color: filter === s ? "#fff" : "#5B564C" }}>{s}</div>)}
     </div>
@@ -595,7 +660,7 @@ function Reservations({ data, run, busy }) {
           </div>
         </Card>;
       })}
-      {list.length === 0 && <Card><div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune commande dans ce filtre.</div></Card>}
+      {list.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune commande dans ce filtre.</div></Card>}
     </div>
     {modal && <NewReservationModal data={data} run={run} onClose={() => setModal(false)} />}
     {openId && <ReservationDetail data={data} run={run} id={openId} onClose={() => setOpenId(null)} />}
@@ -653,7 +718,7 @@ function NewReservationModal({ data, run, onClose }) {
     </Field>
     <Field label="Packs prédéfinis (optionnel)"><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{data.packs.map((p) => <Btn key={p.id} small variant="gold" onClick={() => applyPack(p.id)}>{p.name}</Btn>)}</div></Field>
     <Field label="Articles et quantités">
-      <div style={{ border: "1px solid #E9E6DE", borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
+      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
         {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
           <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
           <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
@@ -763,20 +828,21 @@ function Planning({ data }) {
   const bookedQty = (itemId, day) => data.reservations.filter((r) => r.status !== "Retourné" && day >= r.startDate && day <= r.endDate).reduce((s, r) => s + (r.items.find((i) => i.itemId === itemId)?.qty || 0), 0);
 
   return <div>
-    <SectionTitle action={<div style={{ display: "flex", gap: 6 }}>
+    <PageBanner icon={CalendarDays} title="Planning" subtitle={`Semaine du ${days[0]}`} />
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, justifyContent: "flex-end" }}>
       <Btn small variant="ghost" icon={ChevronLeft} onClick={() => shift(-1)}>Semaine préc.</Btn>
       <Btn small variant="ghost" onClick={() => shift(1)}>Semaine suiv. <ChevronRight size={13} /></Btn>
-    </div>}>Planning — semaine du {days[0]}</SectionTitle>
+    </div>
     <Card style={{ padding: 0, overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-        <thead><tr style={{ background: "#FAF9F5" }}><th style={{ padding: 8, textAlign: "left", fontSize: 11.5, color: "#8A857A" }}>Article</th>{days.map((d) => <th key={d} style={{ padding: 8, fontSize: 11, color: "#8A857A" }}>{d.slice(5)}</th>)}</tr></thead>
+        <thead><tr style={{ background: "#FAF9F5" }}><th style={{ padding: 8, textAlign: "left", fontSize: 11.5, color: TEXT_MUTED }}>Article</th>{days.map((d) => <th key={d} style={{ padding: 8, fontSize: 11, color: TEXT_MUTED }}>{d.slice(5)}</th>)}</tr></thead>
         <tbody>{data.inventory.map((item) => <tr key={item.id} style={{ borderTop: "1px solid #F0EEE7" }}>
           <td style={{ padding: 8, fontWeight: 700 }}>{item.name}</td>
           {days.map((d) => { const q = bookedQty(item.id, d); const ratio = q / item.total; const bg = q === 0 ? "#fff" : ratio >= 1 ? "#F7C9C4" : ratio > 0.6 ? "#FBE3B0" : "#DFF0E8"; return <td key={d} style={{ padding: 8, textAlign: "center", background: bg, fontWeight: q > 0 ? 700 : 400 }}>{q > 0 ? `${q}/${item.total}` : "—"}</td>; })}
         </tr>)}</tbody>
       </table>
     </Card>
-    <div style={{ fontSize: 11.5, color: "#8A857A", marginTop: 8 }}>Vert = disponibilité confortable · Orange = tension &gt;60% · Rouge = complet</div>
+    <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 8 }}>Vert = disponibilité confortable · Orange = tension &gt;60% · Rouge = complet</div>
   </div>;
 }
 
@@ -784,7 +850,7 @@ function Planning({ data }) {
 function Clients({ data, run }) {
   const historyFor = (clientId) => data.reservations.filter((r) => r.clientId === clientId);
   return <div>
-    <SectionTitle>Clients</SectionTitle>
+    <PageBanner icon={Users} title="Clients" subtitle="Historique et vigilance" />
     <div style={{ display: "grid", gap: 10 }}>
       {data.clients.map((c) => {
         const hist = historyFor(c.id);
@@ -811,7 +877,8 @@ function Drivers({ data, run }) {
   const [f, setF] = useState({ name: "", phone: "", type: "interne", fee: 0 });
   const add = () => { if (!f.name) return; run(() => db.createDriver(f.name, f.phone, f.type, +f.fee)); setF({ name: "", phone: "", type: "interne", fee: 0 }); setModal(false); };
   return <div>
-    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal(true)}>Ajouter un livreur</Btn>}>Livreurs</SectionTitle>
+    <PageBanner icon={Truck} title="Livreurs" subtitle="Internes et freelances" />
+    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal(true)}>Ajouter un livreur</Btn>}>&nbsp;</SectionTitle>
     <div style={{ display: "grid", gap: 10 }}>
       {data.drivers.map((d) => <Card key={d.id}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -850,7 +917,7 @@ function SettingsPage({ data, run, busy }) {
   };
 
   return <div>
-    <SectionTitle>Paramètres — personnalisation du devis</SectionTitle>
+    <PageBanner icon={SettingsIcon} title="Paramètres" subtitle="Personnalisation du devis" />
     <Card style={{ maxWidth: 480 }}>
       <Field label="Nom de l'entreprise (en-tête du devis)">
         <input style={inputStyle} value={f.companyName} onChange={(e) => { setF({ ...f, companyName: e.target.value }); setSaved(false); }} />
@@ -864,7 +931,7 @@ function SettingsPage({ data, run, busy }) {
       <Field label="Logo (affiché en haut à gauche du devis)">
         <input type="file" accept="image/*" onChange={handleLogo} style={{ fontSize: 12.5 }} />
         {f.logo && <div style={{ marginTop: 10 }}>
-          <img src={f.logo} alt="Logo" style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 6, border: "1px solid #E9E6DE", background: "#fff", padding: 4 }} />
+          <img src={f.logo} alt="Logo" style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 6, border: `1px solid ${BORDER}`, background: "#fff", padding: 4 }} />
           <div style={{ marginTop: 6 }}><Btn small variant="ghost" onClick={() => { setF({ ...f, logo: null }); setSaved(false); }}>Retirer le logo</Btn></div>
         </div>}
       </Field>
@@ -884,7 +951,8 @@ function UsersPage({ data, run, currentUser }) {
     if (confirm("Supprimer cet utilisateur ?")) run(() => db.deleteUser(id));
   };
   return <div>
-    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un utilisateur</Btn>}>Utilisateurs</SectionTitle>
+    <PageBanner icon={UserCog} title="Utilisateurs" subtitle="Comptes et droits d'accès" />
+    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un utilisateur</Btn>}>&nbsp;</SectionTitle>
     <div style={{ display: "grid", gap: 10 }}>
       {data.users.map((u) => <Card key={u.id}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -901,7 +969,7 @@ function UsersPage({ data, run, currentUser }) {
           </div>
         </div>
       </Card>)}
-      {data.users.length === 0 && <Card><div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucun utilisateur (la table 'users' a-t-elle bien été créée dans Supabase ?)</div></Card>}
+      {data.users.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun utilisateur (la table 'users' a-t-elle bien été créée dans Supabase ?)</div></Card>}
     </div>
     {modal !== null && <UserModal user={modal} onClose={() => setModal(null)} run={run} />}
   </div>;
