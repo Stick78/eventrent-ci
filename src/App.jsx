@@ -630,8 +630,10 @@ function ItemModal({ item, onClose, onSave }) {
 function Reservations({ data, run, busy }) {
   const [modal, setModal] = useState(false);
   const [openId, setOpenId] = useState(null);
+  const [editRes, setEditRes] = useState(null);
   const [filter, setFilter] = useState("Tous");
   const list = data.reservations.filter((r) => filter === "Tous" || r.status === filter).slice().reverse();
+  const remove = (id) => { if (confirm("Supprimer cette réservation ? Cette action est irréversible.")) run(() => db.deleteReservation(id)); };
 
   return <div>
     <PageBanner icon={CalendarDays} title="Réservations" subtitle="Commandes et suivi des paiements" />
@@ -644,14 +646,18 @@ function Reservations({ data, run, busy }) {
         const total = reservationTotal(r);
         const paid = r.payments.reduce((s, p) => s + p.amount, 0);
         return <Card key={r.id}>
-          <div onClick={() => setOpenId(r.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
-            <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div onClick={() => setOpenId(r.id)} style={{ cursor: "pointer", flex: 1 }}>
               <div style={{ fontWeight: 800, fontSize: 14.5 }}>{r.clientName} <span style={{ fontWeight: 500, color: "#8A857A", fontSize: 12.5 }}>· {r.startDate} → {r.endDate}</span></div>
               <div style={{ fontSize: 12.5, color: "#5B564C", marginTop: 3 }}>{r.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
               <div style={{ fontSize: 12.5, marginTop: 5, color: paid >= total ? "#1F6F4B" : "#B3261E", fontWeight: 700 }}>{fmt(paid)} / {fmt(total)} payé</div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+              <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setEditRes(r)} />
+              <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(r.id)} />
             </div>
           </div>
         </Card>;
@@ -660,7 +666,68 @@ function Reservations({ data, run, busy }) {
     </div>
     {modal && <NewReservationModal data={data} run={run} onClose={() => setModal(false)} />}
     {openId && <ReservationDetail data={data} run={run} id={openId} onClose={() => setOpenId(null)} />}
+    {editRes && <EditReservationModal data={data} run={run} reservation={editRes} onClose={() => setEditRes(null)} />}
   </div>;
+}
+
+function EditReservationModal({ data, run, reservation, onClose }) {
+  const [selectedItems, setSelectedItems] = useState(() => {
+    const obj = {};
+    reservation.items.forEach((it) => { obj[it.itemId] = it.qty; });
+    return obj;
+  });
+  const [start, setStart] = useState(reservation.startDate);
+  const [end, setEnd] = useState(reservation.endDate);
+  const [address, setAddress] = useState(reservation.address || "");
+  const [zone, setZone] = useState(reservation.zone);
+  const [seasonal, setSeasonal] = useState(reservation.seasonal);
+  const [caution, setCaution] = useState(reservation.caution);
+  const [driverId, setDriverId] = useState(reservation.driverId || "");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => {
+      const inv = data.inventory.find((i) => i.id === itemId);
+      return { itemId, qty, unit: inv ? inv.unit : 0 };
+    });
+    if (items.length === 0 || !start || !end) return;
+    setSaving(true);
+    try {
+      await run(async () => {
+        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0 });
+        await db.updateReservationItems(reservation.id, items);
+      });
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  return <Modal title={`Modifier la commande — ${reservation.clientName}`} onClose={onClose} width={640}>
+    <Field label="Articles et quantités">
+      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
+        {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
+          <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
+          <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
+        </div>)}
+      </div>
+    </Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Date de début"><input type="date" style={inputStyle} value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+      <Field label="Date de fin"><input type="date" style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+    </div>
+    <Field label="Adresse de livraison"><input style={inputStyle} value={address} onChange={(e) => setAddress(e.target.value)} /></Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Zone de livraison"><select style={inputStyle} value={zone} onChange={(e) => setZone(e.target.value)}>{ZONES.map((z) => <option key={z.id} value={z.id}>{z.label} (+{fmt(z.fee)})</option>)}</select></Field>
+      <Field label="Tarification"><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8 }}><input type="checkbox" checked={seasonal} onChange={(e) => setSeasonal(e.target.checked)} /> Haute saison (+20%)</label></Field>
+    </div>
+    <Field label="Livreur">
+      <select style={inputStyle} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
+        <option value="">Non assigné</option>
+        {data.drivers.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.type === "externe" ? "freelance" : "interne"})</option>)}
+      </select>
+    </Field>
+    <Field label="Caution (FCFA)"><input type="number" style={inputStyle} value={caution} onChange={(e) => setCaution(e.target.value)} /></Field>
+    <Btn disabled={saving} onClick={submit}>{saving ? "Enregistrement..." : "Enregistrer les modifications"}</Btn>
+  </Modal>;
 }
 
 function NewReservationModal({ data, run, onClose }) {
@@ -844,7 +911,15 @@ function Planning({ data }) {
 
 // ---------- Clients ----------
 function Clients({ data, run }) {
+  const [modal, setModal] = useState(null);
   const historyFor = (clientId) => data.reservations.filter((r) => r.clientId === clientId);
+  const remove = (id) => {
+    if (data.reservations.some((r) => r.clientId === id)) {
+      alert("Impossible de supprimer : ce client a des réservations associées.");
+      return;
+    }
+    if (confirm("Supprimer ce client ?")) run(() => db.deleteClient(id));
+  };
   return <div>
     <PageBanner icon={Users} title="Clients" subtitle="Historique et vigilance" />
     <div style={{ display: "grid", gap: 10 }}>
@@ -853,34 +928,62 @@ function Clients({ data, run }) {
         const spent = hist.reduce((s, r) => s + r.payments.reduce((s2, p) => s2 + p.amount, 0), 0);
         const damages = hist.filter((r) => (r.damaged || []).some((d) => d.qty > 0)).length;
         return <Card key={c.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <div>
               <div style={{ fontWeight: 800 }}>{c.name} {c.flagged && <Badge text="À surveiller" bg="#FBEAE8" fg="#B3261E" />}</div>
               <div style={{ fontSize: 12.5, color: "#8A857A", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {c.phone}</div>
             </div>
             <div style={{ textAlign: "right", fontSize: 12.5 }}><div>Total payé : <b>{fmt(spent)}</b></div><div>{hist.length} commande(s) · {damages} avec casse</div></div>
-            <Btn small variant={c.flagged ? "danger" : "ghost"} onClick={() => run(() => db.setClientFlag(c.id, !c.flagged))}>{c.flagged ? "Retirer vigilance" : "Mettre en vigilance"}</Btn>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+              <Btn small variant={c.flagged ? "danger" : "ghost"} onClick={() => run(() => db.setClientFlag(c.id, !c.flagged))}>{c.flagged ? "Retirer vigilance" : "Mettre en vigilance"}</Btn>
+              <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(c)} />
+              <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(c.id)} />
+            </div>
           </div>
         </Card>;
       })}
     </div>
+    {modal && <ClientEditModal client={modal} onClose={() => setModal(null)} run={run} />}
   </div>;
+}
+
+function ClientEditModal({ client, onClose, run }) {
+  const [name, setName] = useState(client.name);
+  const [phone, setPhone] = useState(client.phone);
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!name) return;
+    setSaving(true);
+    try { await run(() => db.updateClient(client.id, name, phone)); onClose(); }
+    finally { setSaving(false); }
+  };
+  return <Modal title="Modifier le client" onClose={onClose}>
+    <Field label="Nom"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+    <Field label="Téléphone"><input style={inputStyle} value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
+    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
+  </Modal>;
 }
 
 // ---------- Drivers ----------
 function Drivers({ data, run }) {
   const [modal, setModal] = useState(false);
+  const [editDriver, setEditDriver] = useState(null);
   const [f, setF] = useState({ name: "", phone: "", type: "interne", fee: 0 });
   const add = () => { if (!f.name) return; run(() => db.createDriver(f.name, f.phone, f.type, +f.fee)); setF({ name: "", phone: "", type: "interne", fee: 0 }); setModal(false); };
+  const remove = (id) => { if (confirm("Supprimer ce livreur ? Les réservations liées seront désassignées.")) run(() => db.deleteDriver(id)); };
   return <div>
     <PageBanner icon={Truck} title="Livreurs" subtitle="Internes et freelances" />
     <SectionTitle action={<Btn icon={Plus} onClick={() => setModal(true)}>Ajouter un livreur</Btn>}>&nbsp;</SectionTitle>
     <div style={{ display: "grid", gap: 10 }}>
       {data.drivers.map((d) => <Card key={d.id}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           <div><div style={{ fontWeight: 800 }}>{d.name}</div><div style={{ fontSize: 12.5, color: "#8A857A", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {d.phone}</div></div>
           <Badge text={d.type === "externe" ? "Freelance / externe" : "Interne"} bg={d.type === "externe" ? "#FBF0DA" : "#DCEAFB"} fg={d.type === "externe" ? "#9A6A00" : "#1D5FA8"} />
           {d.type === "externe" && <div style={{ fontSize: 12.5 }}>Frais/course : {fmt(d.fee)}</div>}
+          <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setEditDriver(d)} />
+            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(d.id)} />
+          </div>
         </div>
       </Card>)}
     </div>
@@ -891,7 +994,26 @@ function Drivers({ data, run }) {
       {f.type === "externe" && <Field label="Frais par course (FCFA)"><input type="number" style={inputStyle} value={f.fee} onChange={(e) => setF({ ...f, fee: e.target.value })} /></Field>}
       <Btn onClick={add}>Ajouter</Btn>
     </Modal>}
+    {editDriver && <DriverEditModal driver={editDriver} onClose={() => setEditDriver(null)} run={run} />}
   </div>;
+}
+
+function DriverEditModal({ driver, onClose, run }) {
+  const [f, setF] = useState({ ...driver });
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!f.name) return;
+    setSaving(true);
+    try { await run(() => db.updateDriver(driver.id, f.name, f.phone, f.type, +f.fee || 0)); onClose(); }
+    finally { setSaving(false); }
+  };
+  return <Modal title="Modifier le livreur" onClose={onClose}>
+    <Field label="Nom"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+    <Field label="Téléphone"><input style={inputStyle} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+    <Field label="Type"><select style={inputStyle} value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="interne">Interne (salarié)</option><option value="externe">Freelance / externe</option></select></Field>
+    {f.type === "externe" && <Field label="Frais par course (FCFA)"><input type="number" style={inputStyle} value={f.fee} onChange={(e) => setF({ ...f, fee: e.target.value })} /></Field>}
+    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
+  </Modal>;
 }
 
 // ---------- Settings (personnalisation devis) ----------
