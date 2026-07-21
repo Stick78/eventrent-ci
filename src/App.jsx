@@ -407,6 +407,7 @@ function DailyRevenueChart({ data }) {
   const revenueByDay = days.map((day) => {
     let s = 0;
     data.reservations.forEach((r) => r.payments.forEach((p) => { if (p.date === day) s += p.amount; }));
+    data.additionalRevenues.forEach((rev) => { if (rev.date === day) s += rev.amount; });
     return { day, value: s };
   });
   const max = Math.max(...revenueByDay.map((d) => d.value), 1);
@@ -430,10 +431,16 @@ function Dashboard({ data }) {
   }, []);
 
   const revenueMonth = useMemo(() => {
-    let s = 0; data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === monthKey) s += p.amount; })); return s;
+    let s = 0;
+    data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === monthKey) s += p.amount; }));
+    data.additionalRevenues.forEach((rev) => { if ((rev.date || "").slice(0, 7) === monthKey) s += rev.amount; });
+    return s;
   }, [data, monthKey]);
   const revenuePrevMonth = useMemo(() => {
-    let s = 0; data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === prevMonthKey) s += p.amount; })); return s;
+    let s = 0;
+    data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === prevMonthKey) s += p.amount; }));
+    data.additionalRevenues.forEach((rev) => { if ((rev.date || "").slice(0, 7) === prevMonthKey) s += rev.amount; });
+    return s;
   }, [data, prevMonthKey]);
   const revenueEvolution = revenuePrevMonth === 0
     ? (revenueMonth > 0 ? 100 : 0)
@@ -512,11 +519,13 @@ function Bilan({ data }) {
   const reservationsInRange = data.reservations.filter((r) => r.startDate >= from && r.startDate <= to);
   const allPaymentsInRange = [];
   data.reservations.forEach((r) => r.payments.forEach((p) => { if (p.date >= from && p.date <= to) allPaymentsInRange.push(p); }));
+  const manualRevenuesInRange = data.additionalRevenues.filter((r) => r.date >= from && r.date <= to);
 
-  const totalRevenue = allPaymentsInRange.reduce((s, p) => s + p.amount, 0);
+  const totalRevenue = allPaymentsInRange.reduce((s, p) => s + p.amount, 0) + manualRevenuesInRange.reduce((s, r) => s + r.amount, 0);
   const totalBilled = reservationsInRange.reduce((s, r) => s + reservationTotal(r), 0);
   const totalOutstanding = Math.max(totalBilled - reservationsInRange.reduce((s, r) => s + r.payments.reduce((s2, p) => s2 + p.amount, 0), 0), 0);
   const byMode = PAYMENT_MODES.map((mode) => ({ mode, total: allPaymentsInRange.filter((p) => p.mode === mode).reduce((s, p) => s + p.amount, 0) }));
+  const manualRevenuesTotal = manualRevenuesInRange.reduce((s, r) => s + r.amount, 0);
 
   return <div>
     <PageBanner icon={BarChart3} title="Bilan" subtitle="Activité, recettes et réservations sur la période" />
@@ -534,6 +543,9 @@ function Bilan({ data }) {
       {byMode.map((b) => <div key={b.mode} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13 }}>
         <span>{b.mode}</span><b>{fmt(b.total)}</b>
       </div>)}
+      {manualRevenuesTotal > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13 }}>
+        <span>Recettes manuelles (hors location)</span><b>{fmt(manualRevenuesTotal)}</b>
+      </div>}
     </Card>
     <Card style={{ padding: 0 }}>
       <div style={{ fontWeight: 800, padding: "14px 16px 0" }}>Réservations créées sur la période ({reservationsInRange.length})</div>
