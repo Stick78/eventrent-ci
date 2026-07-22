@@ -2,8 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
-  PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank
+  PackageCheck, Printer, Wallet, Loader2, LogOut, Mail, Lock
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -20,175 +19,34 @@ const STATUS_COLORS = {
   "Livré": { bg: "#DFF0E8", fg: "#1F6F4B" },
   "Retourné": { bg: "#EAE8E2", fg: "#5B564C" },
 };
-const MODULES = [
-  { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
-  { id: "bilan", label: "Bilan", icon: BarChart3 },
-  { id: "revenues", label: "Recettes", icon: Wallet },
-  { id: "expenses", label: "Dépenses", icon: Receipt },
-  { id: "inventory", label: "Inventaire", icon: Package },
-  { id: "reservations", label: "Réservations", icon: CalendarDays },
-  { id: "planning", label: "Planning", icon: CalendarDays },
-  { id: "clients", label: "Clients", icon: Users },
-  { id: "drivers", label: "Livreurs", icon: Truck },
-  { id: "settings", label: "Paramètres", icon: SettingsIcon },
-  { id: "users", label: "Utilisateurs", icon: UserCog },
-];
-const NAVY = "#0F1B3D";
-const BG = "#F5F6FA";
-const BORDER = "#E5E7EB";
-const TEXT_MUTED = "#6B7280";
-const TEXT_DARK = "#111827";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
-const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
-const reservationTotal = (r) => r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
-const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
-// ---------- Génération du devis PDF (personnalisable) ----------
-function generateQuotePDF(r, data) {
-  if (!window.jspdf) { alert("La librairie PDF n'a pas pu se charger. Vérifie ta connexion et réessaie."); return; }
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const settings = data.settings || { companyName: "EventRent CI", phone: "", footerText: "", logo: null };
-  const zone = ZONES.find((z) => z.id === r.zone);
-  const driver = data.drivers.find((d) => d.id === r.driverId);
-  const subtotal = r.items.reduce((s, it) => s + it.qty * it.unit, 0);
-  const seasonalFee = r.seasonal ? subtotal * 0.2 : 0;
-  const zoneFee = zone?.fee || 0;
-  const total = subtotal + seasonalFee + zoneFee;
-  const paid = r.payments.reduce((s, p) => s + p.amount, 0);
-  const remaining = Math.max(total - paid, 0);
-  const docNumber = `DEV-${r.id.toString().slice(0, 8).toUpperCase()}`;
-
-  const headerHeight = settings.phone ? 36 : 32;
-  doc.setFillColor(20, 37, 30);
-  doc.rect(0, 0, 210, headerHeight, "F");
-
-  let textX = 14;
-  if (settings.logo) {
-    try {
-      const match = settings.logo.match(/^data:image\/(png|jpe?g);base64,/i);
-      const format = match ? match[1].toUpperCase().replace("JPG", "JPEG") : "PNG";
-      doc.addImage(settings.logo, format, 14, 6, 22, 22);
-      textX = 40;
-    } catch (e) {
-      console.error("Impossible d'insérer le logo dans le PDF :", e);
-    }
-  }
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18);
-  doc.setFont(undefined, "bold");
-  doc.text(settings.companyName || "EventRent CI", textX, 17);
-  doc.setFontSize(8);
-  doc.setFont(undefined, "normal");
-  doc.setTextColor(200, 210, 205);
-  doc.text("Location de matériel événementiel — Côte d'Ivoire", textX, 23);
-  if (settings.phone) doc.text(`Tél : ${settings.phone}`, textX, 29);
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(14);
-  doc.setFont(undefined, "bold");
-  doc.text("DEVIS", 196, 15, { align: "right" });
-  doc.setFontSize(9);
-  doc.setFont(undefined, "normal");
-  doc.text(docNumber, 196, 21, { align: "right" });
-  doc.text(`Émis le ${fmtDate(todayISO())}`, 196, 26, { align: "right" });
-
-  let y = headerHeight + 12;
-  doc.setTextColor(20, 25, 20);
-  doc.setFontSize(10);
-  doc.setFont(undefined, "bold");
-  doc.text("Client", 14, y);
-  doc.setFont(undefined, "normal");
-  doc.text(r.clientName || "—", 14, y + 6);
-
-  doc.setFont(undefined, "bold");
-  doc.text("Période de location", 110, y);
-  doc.setFont(undefined, "normal");
-  doc.text(`${fmtDate(r.startDate)}  →  ${fmtDate(r.endDate)}`, 110, y + 6);
-
-  y += 16;
-  doc.setFont(undefined, "bold");
-  doc.text("Adresse de livraison", 14, y);
-  doc.setFont(undefined, "normal");
-  doc.text(r.address || "Non renseignée", 14, y + 6);
-  doc.text(`Zone : ${zone?.label || "—"}`, 14, y + 12);
-
-  doc.setFont(undefined, "bold");
-  doc.text("Livreur", 110, y);
-  doc.setFont(undefined, "normal");
-  doc.text(driver ? `${driver.name} (${driver.type === "externe" ? "freelance" : "interne"})` : "Non assigné", 110, y + 6);
-
-  const rows = r.items.map((it) => [it.name, String(it.qty), fmt(it.unit), fmt(it.qty * it.unit)]);
-  doc.autoTable({
-    startY: y + 20,
-    head: [["Article", "Qté", "Prix unitaire", "Sous-total"]],
-    body: rows,
-    theme: "grid",
-    headStyles: { fillColor: [31, 111, 75], textColor: 255, fontStyle: "bold" },
-    styles: { fontSize: 9, cellPadding: 3 },
-    columnStyles: { 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" } },
-  });
-
-  let finalY = doc.lastAutoTable.finalY + 8;
-  const totalsLine = (label, value, bold) => {
-    doc.setFont(undefined, bold ? "bold" : "normal");
-    doc.setFontSize(bold ? 11 : 10);
-    doc.text(label, 140, finalY, { align: "right" });
-    doc.text(value, 196, finalY, { align: "right" });
-    finalY += bold ? 8 : 6;
-  };
-  totalsLine("Sous-total articles", fmt(subtotal), false);
-  if (r.seasonal) totalsLine("Majoration haute saison (+20%)", fmt(seasonalFee), false);
-  if (zoneFee > 0) totalsLine("Frais de livraison", fmt(zoneFee), false);
-  doc.setDrawColor(220, 220, 220);
-  doc.line(140, finalY - 2, 196, finalY - 2);
-  totalsLine("TOTAL", fmt(total), true);
-  totalsLine("Déjà payé", fmt(paid), false);
-  totalsLine("Reste à payer", fmt(remaining), true);
-
-  finalY += 4;
-  doc.setFontSize(9);
-  doc.setFont(undefined, "normal");
-  doc.setTextColor(90, 90, 90);
-  doc.text(`Caution demandée : ${fmt(r.caution)}`, 14, finalY);
-
-  doc.setFontSize(8);
-  doc.setTextColor(140, 140, 140);
-  const footer = settings.footerText || "Devis valable 15 jours à compter de la date d'émission.";
-  doc.text(`${settings.companyName || "EventRent CI"} — ${footer}`, 14, 285);
-  doc.text("Ce document ne constitue pas une facture.", 14, 290);
-
-  doc.save(`${docNumber}-${(r.clientName || "client").replace(/\s+/g, "_")}.pdf`);
-}
-
-// ---------- App ----------
 export default function App() {
-  const [tab, setTab] = useState("reservations");
+  const [session, setSession] = useState(undefined); // undefined = pas encore vérifié, null = pas connecté
+  const [tab, setTab] = useState("dashboard");
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    db.getSession().then(setSession);
+    const unsubscribe = db.onAuthStateChange(setSession);
+    return unsubscribe;
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
       const d = await db.fetchAll();
       setData(d);
       setError(null);
-      const savedId = localStorage.getItem("eventrent_user_id");
-      if (savedId) {
-        const found = (d.users || []).find((u) => u.id === savedId);
-        if (found) setCurrentUser(found);
-        else localStorage.removeItem("eventrent_user_id");
-      }
     } catch (e) {
       console.error(e);
       setError(e.message || "Erreur de connexion à la base");
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { if (session) refresh(); }, [session, refresh]);
 
   const run = async (fn) => {
     setBusy(true);
@@ -197,49 +55,36 @@ export default function App() {
     finally { setBusy(false); }
   };
 
-  const handleLogin = (user) => {
-    localStorage.setItem("eventrent_user_id", user.id);
-    setCurrentUser(user);
+  const handleLogout = async () => {
+    await db.signOut();
+    setData(null);
+    setTab("dashboard");
   };
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem("eventrent_user_id");
-    setCurrentUser(null);
-  }, []);
 
-  useEffect(() => {
-    if (!currentUser) return;
-    let timer;
-    const reset = () => { clearTimeout(timer); timer = setTimeout(handleLogout, 20 * 60 * 1000); };
-    const events = ["mousemove", "keydown", "click", "touchstart"];
-    events.forEach((ev) => window.addEventListener(ev, reset));
-    reset();
-    return () => { clearTimeout(timer); events.forEach((ev) => window.removeEventListener(ev, reset)); };
-  }, [currentUser, handleLogout]);
-
-  useEffect(() => {
-    if (currentUser && !currentUser.permissions?.[tab]) {
-      const firstAllowed = MODULES.find((m) => currentUser.permissions?.[m.id]);
-      if (firstAllowed) setTab(firstAllowed.id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
-
-  if (!data) {
-    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, color: TEXT_MUTED, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
-      <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement...
-    </div>;
+  if (session === undefined) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#F7F5F1", fontFamily: "-apple-system, sans-serif" }}>
+        <Loader2 size={22} style={{ animation: "spin 1s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
   }
 
-  if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
+  if (!session) {
+    return <AuthScreen />;
   }
 
-  const nav = MODULES.filter((m) => currentUser.permissions?.[m.id]);
-  const hasAccess = (id) => !!currentUser.permissions?.[id];
-  const isAdmin = !!currentUser.permissions?.users;
+  const nav = [
+    { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
+    { id: "inventory", label: "Inventaire", icon: Package },
+    { id: "reservations", label: "Réservations", icon: CalendarDays },
+    { id: "planning", label: "Planning", icon: CalendarDays },
+    { id: "clients", label: "Clients", icon: Users },
+    { id: "drivers", label: "Livreurs", icon: Truck },
+  ];
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK, display: "flex" }}>
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: "#F7F5F1", minHeight: "100vh", color: "#1F2421", display: "flex" }}>
       <style>{`
         * { box-sizing: border-box; }
         button { font-family: inherit; cursor: pointer; }
@@ -248,122 +93,148 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: #D8D4C8; border-radius: 4px; }
       `}</style>
 
-      {/* Menu latéral */}
-      <div style={{ width: 210, background: NAVY, color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
+      <div style={{ width: 200, background: "#14251E", color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "0 8px 20px 8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>ER</div>
-            <div style={{ fontWeight: 800, fontSize: 16 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
-          </div>
-          <div style={{ fontSize: 11, color: "#9BAFC9", marginTop: 6 }}>Connecté à Supabase</div>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+          <div style={{ fontSize: 11, color: "#9BAFA4", marginTop: 2, wordBreak: "break-all" }}>{session.user.email}</div>
         </div>
-        <div style={{ flex: 1 }}>
-          {nav.map((n) => {
-            const Icon = n.icon; const active = tab === n.id;
-            return (
-              <div key={n.id} onClick={() => setTab(n.id)} style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
-                background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
-                fontSize: 13.5, fontWeight: active ? 700 : 500,
-              }}>
-                <Icon size={16} /> {n.label}
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ borderTop: "1px solid #24304F", paddingTop: 12, marginTop: 12 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{currentUser.name}</div>
-          <div onClick={handleLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", cursor: "pointer" }}>
-            <LogOut size={13} /> Déconnexion
-          </div>
+        {nav.map((n) => {
+          const Icon = n.icon; const active = tab === n.id;
+          return (
+            <div key={n.id} onClick={() => setTab(n.id)} style={{
+              display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
+              background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
+              fontSize: 13.5, fontWeight: active ? 700 : 500,
+            }}>
+              <Icon size={16} /> {n.label}
+            </div>
+          );
+        })}
+        <div style={{ flex: 1 }} />
+        <div onClick={handleLogout} style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8,
+          color: "#CBD5CC", fontSize: 13.5, fontWeight: 500, borderTop: "1px solid #223428", marginTop: 8, paddingTop: 16,
+        }}>
+          <LogOut size={16} /> Déconnexion
         </div>
       </div>
 
-      {/* Contenu */}
       <div style={{ flex: 1, padding: 24, maxWidth: 1100 }}>
         {error && (
           <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>
             ⚠ {error}
           </div>
         )}
-        {tab === "dashboard" && hasAccess("dashboard") && <Dashboard data={data} />}
-        {tab === "bilan" && hasAccess("bilan") && <Bilan data={data} />}
-        {tab === "revenues" && hasAccess("revenues") && <Recettes data={data} run={run} busy={busy} />}
-        {tab === "expenses" && hasAccess("expenses") && <Depenses data={data} run={run} busy={busy} />}
-        {tab === "inventory" && hasAccess("inventory") && <Inventory data={data} run={run} busy={busy} />}
-        {tab === "reservations" && hasAccess("reservations") && <Reservations data={data} run={run} busy={busy} />}
-        {tab === "planning" && hasAccess("planning") && <Planning data={data} />}
-        {tab === "clients" && hasAccess("clients") && <Clients data={data} run={run} />}
-        {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
-        {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
-        {tab === "users" && hasAccess("users") && <UsersPage data={data} run={run} currentUser={currentUser} />}
-        {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
+        {!data ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#8A857A" }}><Loader2 className="spin" size={18} /> Chargement des données...</div>
+        ) : (
+          <>
+            {tab === "dashboard" && <Dashboard data={data} />}
+            {tab === "inventory" && <Inventory data={data} run={run} busy={busy} />}
+            {tab === "reservations" && <Reservations data={data} run={run} busy={busy} />}
+            {tab === "planning" && <Planning data={data} />}
+            {tab === "clients" && <Clients data={data} run={run} />}
+            {tab === "drivers" && <Drivers data={data} run={run} />}
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// ---------- Connexion ----------
-function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState("");
+// ---------- Authentication screen ----------
+function AuthScreen() {
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [message, setMessage] = useState(null);
 
-  const submit = async () => {
-    if (!username || !password) return;
-    setError(""); setLoading(true);
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setMessage(null);
     try {
-      const user = await db.verifyLogin(username.trim(), password);
-      if (!user) { setError("Identifiants incorrects."); setLoading(false); return; }
-      onLogin(user);
-    } catch (e) {
-      console.error(e);
-      setError("Erreur de connexion. Réessaie.");
+      if (mode === "signup") {
+        await db.signUp(email, password);
+        setMessage("Compte créé ! Vous pouvez maintenant vous connecter.");
+        setMode("signin");
+      } else {
+        await db.signIn(email, password);
+      }
+    } catch (err) {
+      setError(err.message || "Une erreur est survenue");
+    } finally {
       setLoading(false);
     }
   };
 
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
-    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff" }}>ER</div>
-        <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+  const inputStyle = { width: "100%", padding: "10px 12px 10px 38px", border: "1px solid #DAD6CB", borderRadius: 8, fontSize: 14, background: "#FCFBF8" };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F7F5F1", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", padding: 20 }}>
+      <style>{`* { box-sizing: border-box; } button { font-family: inherit; cursor: pointer; } input { font-family: inherit; }`}</style>
+      <div style={{ width: 380, maxWidth: "100%", background: "#fff", border: "1px solid #E9E6DE", borderRadius: 14, padding: 32 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontWeight: 800, fontSize: 22, color: "#14251E" }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+          <div style={{ fontSize: 13, color: "#8A857A", marginTop: 4 }}>
+            {mode === "signin" ? "Connectez-vous à votre espace" : "Créez votre compte loueur"}
+          </div>
+        </div>
+
+        <form onSubmit={submit}>
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <Mail size={16} style={{ position: "absolute", left: 12, top: 13, color: "#8A857A" }} />
+            <input type="email" required placeholder="Adresse email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+          </div>
+          <div style={{ position: "relative", marginBottom: 16 }}>
+            <Lock size={16} style={{ position: "absolute", left: 12, top: 13, color: "#8A857A" }} />
+            <input type="password" required minLength={6} placeholder="Mot de passe (6 caractères min.)" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+          </div>
+
+          {error && <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "9px 12px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{error}</div>}
+          {message && <div style={{ background: "#DFF0E8", color: "#1F6F4B", padding: "9px 12px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{message}</div>}
+
+          <button type="submit" disabled={loading} style={{
+            width: "100%", background: "#1F6F4B", color: "#fff", border: "none", borderRadius: 8,
+            padding: "11px 14px", fontSize: 14, fontWeight: 700, opacity: loading ? 0.7 : 1,
+          }}>
+            {loading ? "Veuillez patienter..." : mode === "signin" ? "Se connecter" : "Créer mon compte"}
+          </button>
+        </form>
+
+        <div style={{ textAlign: "center", marginTop: 18, fontSize: 13, color: "#5B564C" }}>
+          {mode === "signin" ? (
+            <>Pas encore de compte ? <span style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }} onClick={() => { setMode("signup"); setError(null); setMessage(null); }}>Créer un compte</span></>
+          ) : (
+            <>Déjà un compte ? <span style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }} onClick={() => { setMode("signin"); setError(null); setMessage(null); }}>Se connecter</span></>
+          )}
+        </div>
       </div>
-      <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Connexion</div>
-      <Field label="Nom d'utilisateur">
-        <input style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
-      </Field>
-      <Field label="Mot de passe">
-        <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
-      </Field>
-      {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
-      <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
     </div>
-  </div>;
+  );
 }
 
 // ---------- shared UI ----------
-function Card({ children, style }) { return <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.03)", ...style }}>{children}</div>; }
+function Card({ children, style }) { return <div style={{ background: "#fff", border: "1px solid #E9E6DE", borderRadius: 10, padding: 16, ...style }}>{children}</div>; }
 function SectionTitle({ children, action }) {
   return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
     <h2 style={{ margin: 0, fontSize: 19, fontWeight: 800 }}>{children}</h2>{action}
   </div>;
 }
 function Btn({ children, onClick, variant = "primary", small, icon: Icon, disabled }) {
-  const styles = { primary: { background: "#1F6F4B", color: "#fff" }, ghost: { background: "#F1F2F6", color: TEXT_DARK }, danger: { background: "#FBEAE8", color: "#B3261E" }, gold: { background: "#C9A227", color: "#1F2421" } };
+  const styles = { primary: { background: "#1F6F4B", color: "#fff" }, ghost: { background: "#F1EFE8", color: "#1F2421" }, danger: { background: "#FBEAE8", color: "#B3261E" }, gold: { background: "#C9A227", color: "#1F2421" } };
   return <button disabled={disabled} onClick={onClick} style={{ ...styles[variant], opacity: disabled ? 0.6 : 1, border: "none", borderRadius: 8, padding: small ? "6px 10px" : "9px 14px", fontSize: small ? 12.5 : 13.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
     {Icon && <Icon size={small ? 13 : 15} />} {children}
   </button>;
 }
-function Badge({ text, bg, fg }) { return <span style={{ background: bg, color: fg, fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999 }}>{text}</span>; }
+function Badge({ text, bg, fg }) { return <span style={{ background: bg, color: fg, fontSize: 11.5, fontWeight: 700, padding: "3px 9px", borderRadius: 999 }}>{text}</span>; }
 function Field({ label, children }) { return <div style={{ marginBottom: 12 }}><label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#5B564C", marginBottom: 5 }}>{label}</label>{children}</div>; }
-const inputStyle = { width: "100%", padding: "8px 10px", border: `1px solid ${BORDER}`, borderRadius: 7, fontSize: 13.5, background: "#FAFBFC" };
+const inputStyle = { width: "100%", padding: "8px 10px", border: "1px solid #DAD6CB", borderRadius: 7, fontSize: 13.5, background: "#FCFBF8" };
 function Modal({ title, onClose, children, width = 520 }) {
-  return <div style={{ position: "fixed", inset: 0, background: "rgba(15,27,61,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
+  return <div style={{ position: "fixed", inset: 0, background: "rgba(20,25,20,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
     <div style={{ background: "#fff", borderRadius: 12, width, maxWidth: "90vw", maxHeight: "85vh", overflowY: "auto", padding: 20 }} onClick={(e) => e.stopPropagation()}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <h3 style={{ margin: 0, fontSize: 16.5, fontWeight: 800 }}>{title}</h3>
@@ -374,341 +245,36 @@ function Modal({ title, onClose, children, width = 520 }) {
   </div>;
 }
 
-// ---------- Bandeau de section (style Station Service Grâce) ----------
-function PageBanner({ icon: Icon, title, subtitle }) {
-  return <div style={{ background: NAVY, color: "#fff", borderRadius: 12, padding: "20px 24px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
-    {Icon && <Icon size={22} />}
-    <div>
-      <div style={{ fontWeight: 800, fontSize: 19 }}>{title}</div>
-      {subtitle && <div style={{ fontSize: 12.5, color: "#9BAFC9", marginTop: 2 }}>{subtitle}</div>}
-    </div>
-  </div>;
-}
-
-// ---------- Carte KPI colorée ----------
-function KpiCard({ icon: Icon, label, value, sub, color }) {
-  return <div style={{ background: "#fff", borderRadius: 10, borderLeft: `4px solid ${color}`, border: `1px solid ${BORDER}`, borderLeftWidth: 4, borderLeftColor: color, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.03)" }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-      <div style={{ width: 32, height: 32, borderRadius: 8, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Icon size={16} color={color} />
-      </div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
-    </div>
-    <div style={{ fontSize: 21, fontWeight: 800, color: TEXT_DARK }}>{value}</div>
-    {sub && <div style={{ fontSize: 11.5, color: "#9CA3AF", marginTop: 2 }}>{sub}</div>}
-  </div>;
-}
-
-// ---------- Graphique barres (revenus quotidiens) ----------
-function DailyRevenueChart({ data }) {
-  const days = Array.from({ length: 30 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (29 - i)); return d.toISOString().slice(0, 10);
-  });
-  const revenueByDay = days.map((day) => {
-    let s = 0;
-    data.reservations.forEach((r) => r.payments.forEach((p) => { if (p.date === day) s += p.amount; }));
-    data.additionalRevenues.forEach((rev) => { if (rev.date === day) s += rev.amount; });
-    return { day, value: s };
-  });
-  const max = Math.max(...revenueByDay.map((d) => d.value), 1);
-  return <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 180, padding: "10px 4px 0" }}>
-    {revenueByDay.map((d) => (
-      <div key={d.day} title={`${fmtDate(d.day)} : ${fmt(d.value)}`} style={{
-        flex: 1, minWidth: 3, height: `${Math.max((d.value / max) * 100, 2)}%`,
-        background: d.value > 0 ? "#93B4E8" : "#EEF1F6", borderRadius: "3px 3px 0 0",
-      }} />
-    ))}
-  </div>;
-}
-
 // ---------- Dashboard ----------
 function Dashboard({ data }) {
-  const now = new Date();
   const monthKey = todayISO().slice(0, 7);
-  const prevMonthKey = useMemo(() => {
-    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
-  }, []);
-
   const revenueMonth = useMemo(() => {
-    let s = 0;
-    data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === monthKey) s += p.amount; }));
-    data.additionalRevenues.forEach((rev) => { if ((rev.date || "").slice(0, 7) === monthKey) s += rev.amount; });
-    return s;
-  }, [data, monthKey]);
-  const revenuePrevMonth = useMemo(() => {
-    let s = 0;
-    data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === prevMonthKey) s += p.amount; }));
-    data.additionalRevenues.forEach((rev) => { if ((rev.date || "").slice(0, 7) === prevMonthKey) s += rev.amount; });
-    return s;
-  }, [data, prevMonthKey]);
-  const revenueEvolution = revenuePrevMonth === 0
-    ? (revenueMonth > 0 ? 100 : 0)
-    : Math.round(((revenueMonth - revenuePrevMonth) / revenuePrevMonth) * 100);
-
-  const expensesMonth = useMemo(() => {
-    return data.expenses.filter((e) => (e.date || "").slice(0, 7) === monthKey).reduce((s, e) => s + e.amount, 0);
-  }, [data, monthKey]);
-  const grossMargin = revenueMonth - expensesMonth;
-
+    let s = 0; data.reservations.forEach((r) => r.payments.forEach((p) => { if ((p.date || "").slice(0, 7) === monthKey) s += p.amount; })); return s;
+  }, [data]);
   const upcoming = data.reservations.filter((r) => r.startDate >= todayISO() && r.status !== "Retourné").length;
   const onRent = data.reservations.filter((r) => r.status === "Livré").length;
   const lowStock = data.inventory.filter((i) => i.total <= i.low);
-  const newClientsThisMonth = data.clients.filter((c) => c.createdAt && c.createdAt.slice(0, 7) === monthKey).length;
-  const cautionsHeld = data.reservations.filter((r) => r.status !== "Retourné" && r.caution > 0).reduce((s, r) => s + r.caution, 0);
-
-  const topItems = useMemo(() => {
-    const qtyByItem = {};
-    data.reservations.forEach((r) => r.items.forEach((it) => { qtyByItem[it.name] = (qtyByItem[it.name] || 0) + it.qty; }));
-    return Object.entries(qtyByItem).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [data]);
 
   return <div>
-    <PageBanner icon={LayoutDashboard} title="Tableau de bord" subtitle={`EventRent CI · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}`} />
-
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 14 }}>
-      <KpiCard icon={Wallet} label="Revenus du mois" value={fmt(revenueMonth)} color="#2F6FED" />
-      <KpiCard icon={CalendarDays} label="Réservations à venir" value={upcoming} color="#7C5CFC" />
-      <KpiCard icon={Package} label="Matériel en location" value={`${onRent} commande(s)`} color="#E0507B" />
-    </div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 20 }}>
-      <KpiCard icon={TrendingUp} label="Évolution des revenus" value={`${revenueEvolution >= 0 ? "+" : ""}${revenueEvolution}%`} sub="vs mois précédent" color="#2BA8C4" />
-      <KpiCard icon={Users} label="Nouveaux clients ce mois" value={newClientsThisMonth} color="#E8A23D" />
-      <KpiCard icon={ShieldAlert} label="Cautions non restituées" value={fmt(cautionsHeld)} color="#1F9D63" />
-      <KpiCard icon={PiggyBank} label="Marge brute (mois)" value={fmt(grossMargin)} sub="Recettes − Dépenses" color={grossMargin >= 0 ? "#1F9D63" : "#B3261E"} />
-    </div>
-
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginBottom: 20 }}>
-      <Card>
-        <div style={{ fontWeight: 800, marginBottom: 4 }}>Revenus encaissés (30 derniers jours)</div>
-        <DailyRevenueChart data={data} />
-      </Card>
-      <Card>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800, marginBottom: 10 }}>
-          <AlertTriangle size={15} color="#C9A227" /> Alertes stock
-        </div>
-        {lowStock.length === 0 && <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>Aucune alerte pour l'instant.</div>}
-        {lowStock.map((i) => <div key={i.id} style={{ fontSize: 12.5, padding: "6px 0", borderBottom: "1px solid #F0EEE7" }}>
-          <div style={{ fontWeight: 700 }}>{i.name}</div>
-          <div style={{ color: TEXT_MUTED }}>{i.total} en stock (seuil {i.low})</div>
-        </div>)}
-      </Card>
-    </div>
-
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-      <Card>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>Dernières réservations</div>
-        {data.reservations.slice(-5).reverse().map((r) => <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13.5 }}>
-          <span>{r.clientName} — {r.startDate}</span>
-          <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
-        </div>)}
-        {data.reservations.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune réservation pour l'instant.</div>}
-      </Card>
-      <Card>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>Articles les plus loués</div>
-        {topItems.map(([name, qty], i) => <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13.5 }}>
-          <span>{i + 1}. {name}</span>
-          <b>{qty}×</b>
-        </div>)}
-        {topItems.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune donnée pour l'instant.</div>}
-      </Card>
-    </div>
-  </div>;
-}
-
-// ---------- Bilan ----------
-function Bilan({ data }) {
-  const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
-  const [from, setFrom] = useState(firstOfMonth());
-  const [to, setTo] = useState(todayISO());
-
-  const reservationsInRange = data.reservations.filter((r) => r.startDate >= from && r.startDate <= to);
-  const allPaymentsInRange = [];
-  data.reservations.forEach((r) => r.payments.forEach((p) => { if (p.date >= from && p.date <= to) allPaymentsInRange.push(p); }));
-  const manualRevenuesInRange = data.additionalRevenues.filter((r) => r.date >= from && r.date <= to);
-
-  const totalRevenue = allPaymentsInRange.reduce((s, p) => s + p.amount, 0) + manualRevenuesInRange.reduce((s, r) => s + r.amount, 0);
-  const totalBilled = reservationsInRange.reduce((s, r) => s + reservationTotal(r), 0);
-  const totalOutstanding = Math.max(totalBilled - reservationsInRange.reduce((s, r) => s + r.payments.reduce((s2, p) => s2 + p.amount, 0), 0), 0);
-  const byMode = PAYMENT_MODES.map((mode) => ({ mode, total: allPaymentsInRange.filter((p) => p.mode === mode).reduce((s, p) => s + p.amount, 0) }));
-  const manualRevenuesTotal = manualRevenuesInRange.reduce((s, r) => s + r.amount, 0);
-
-  return <div>
-    <PageBanner icon={BarChart3} title="Bilan" subtitle="Activité, recettes et réservations sur la période" />
-    <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
-      <Field label="Du"><input type="date" style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-      <Field label="Au"><input type="date" style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
-    </div>
+    <SectionTitle>Tableau de bord</SectionTitle>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 18 }}>
-      <KpiCard icon={Wallet} label="Revenus encaissés" value={fmt(totalRevenue)} color="#2F6FED" />
-      <KpiCard icon={FileDown} label="Facturé (période)" value={fmt(totalBilled)} color="#7C5CFC" />
-      <KpiCard icon={AlertTriangle} label="Reste à percevoir" value={fmt(totalOutstanding)} color="#E0507B" />
+      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>REVENUS DU MOIS</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{fmt(revenueMonth)}</div></Card>
+      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>RÉSERVATIONS À VENIR</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{upcoming}</div></Card>
+      <Card><div style={{ fontSize: 12, color: "#8A857A", fontWeight: 700 }}>MATÉRIEL EN LOCATION</div><div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{onRent} commande(s)</div></Card>
     </div>
-    <Card style={{ marginBottom: 18 }}>
-      <div style={{ fontWeight: 800, marginBottom: 10 }}>Encaissements par mode de paiement</div>
-      {byMode.map((b) => <div key={b.mode} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13 }}>
-        <span>{b.mode}</span><b>{fmt(b.total)}</b>
+    {lowStock.length > 0 && <Card style={{ borderColor: "#F0DCA0", background: "#FEFAEF", marginBottom: 18 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700, color: "#9A6A00", marginBottom: 6 }}><AlertTriangle size={16} /> Stock faible</div>
+      {lowStock.map((i) => <div key={i.id} style={{ fontSize: 13, marginBottom: 2 }}>{i.name} — {i.total} en stock (seuil {i.low})</div>)}
+    </Card>}
+    <Card>
+      <div style={{ fontWeight: 800, marginBottom: 10 }}>Dernières réservations</div>
+      {data.reservations.slice(-5).reverse().map((r) => <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13.5 }}>
+        <span>{r.clientName} — {r.startDate}</span>
+        <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
       </div>)}
-      {manualRevenuesTotal > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13 }}>
-        <span>Recettes manuelles (hors location)</span><b>{fmt(manualRevenuesTotal)}</b>
-      </div>}
-    </Card>
-    <Card style={{ padding: 0 }}>
-      <div style={{ fontWeight: 800, padding: "14px 16px 0" }}>Réservations créées sur la période ({reservationsInRange.length})</div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 10 }}>
-        <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
-          {["Client", "Dates", "Statut", "Total", "Payé", "Reste"].map((h) => <th key={h} style={{ padding: "8px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
-        </tr></thead>
-        <tbody>{reservationsInRange.map((r) => {
-          const total = reservationTotal(r);
-          const paid = r.payments.reduce((s, p) => s + p.amount, 0);
-          return <tr key={r.id} style={{ borderTop: "1px solid #F0EEE7" }}>
-            <td style={{ padding: "8px 12px" }}>{r.clientName}</td>
-            <td style={{ padding: "8px 12px", color: "#5B564C" }}>{r.startDate} → {r.endDate}</td>
-            <td style={{ padding: "8px 12px" }}><Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} /></td>
-            <td style={{ padding: "8px 12px" }}>{fmt(total)}</td>
-            <td style={{ padding: "8px 12px", color: paid >= total ? "#1F6F4B" : "#B3261E" }}>{fmt(paid)}</td>
-            <td style={{ padding: "8px 12px" }}>{fmt(Math.max(total - paid, 0))}</td>
-          </tr>;
-        })}</tbody>
-      </table>
-      {reservationsInRange.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune réservation sur cette période.</div>}
+      {data.reservations.length === 0 && <div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune réservation pour l'instant.</div>}
     </Card>
   </div>;
-}
-
-// ---------- Recettes ----------
-function Recettes({ data, run, busy }) {
-  const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
-  const [from, setFrom] = useState(firstOfMonth());
-  const [to, setTo] = useState(todayISO());
-  const [modal, setModal] = useState(false);
-
-  const rentalRevenues = [];
-  data.reservations.forEach((r) => r.payments.forEach((p) => {
-    if (p.date >= from && p.date <= to) rentalRevenues.push({ id: p.id, date: p.date, description: `Location — ${r.clientName}`, category: "Location", amount: p.amount, source: "location" });
-  }));
-  const manualRevenues = data.additionalRevenues.filter((r) => r.date >= from && r.date <= to).map((r) => ({ ...r, source: "manuel" }));
-  const all = [...rentalRevenues, ...manualRevenues].sort((a, b) => (a.date < b.date ? 1 : -1));
-  const total = all.reduce((s, r) => s + r.amount, 0);
-
-  const removeManual = (id) => { if (confirm("Supprimer cette recette ?")) run(() => db.deleteAdditionalRevenue(id)); };
-
-  return <div>
-    <PageBanner icon={Wallet} title="Recettes" subtitle="Toutes les recettes encaissées, filtrables par date" />
-    <div style={{ display: "flex", gap: 14, marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
-      <Field label="Du"><input type="date" style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-      <Field label="Au"><input type="date" style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
-      <Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Ajouter une recette</Btn>
-    </div>
-    <Card style={{ marginBottom: 18, maxWidth: 320 }}>
-      <div style={{ fontSize: 12, color: TEXT_MUTED, fontWeight: 700 }}>TOTAL RECETTES (PÉRIODE)</div>
-      <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>{fmt(total)}</div>
-    </Card>
-    <Card style={{ padding: 0 }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
-          {["Date", "Description", "Catégorie", "Montant", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
-        </tr></thead>
-        <tbody>{all.map((r) => <tr key={`${r.source}-${r.id}`} style={{ borderTop: "1px solid #F0EEE7" }}>
-          <td style={{ padding: "10px 12px" }}>{fmtDate(r.date)}</td>
-          <td style={{ padding: "10px 12px" }}>{r.description}</td>
-          <td style={{ padding: "10px 12px" }}><Badge text={r.category} bg={r.source === "location" ? "#DFF0E8" : "#DCEAFB"} fg={r.source === "location" ? "#1F6F4B" : "#1D5FA8"} /></td>
-          <td style={{ padding: "10px 12px", fontWeight: 700 }}>{fmt(r.amount)}</td>
-          <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.source === "manuel" && <Trash2 size={14} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => removeManual(r.id)} />}</td>
-        </tr>)}</tbody>
-      </table>
-      {all.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune recette sur cette période.</div>}
-    </Card>
-    {modal && <RevenueModal onClose={() => setModal(false)} run={run} />}
-  </div>;
-}
-
-function RevenueModal({ onClose, run }) {
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("Autre");
-  const [date, setDate] = useState(todayISO());
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    if (!description || !amount) return;
-    setSaving(true);
-    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date })); onClose(); }
-    finally { setSaving(false); }
-  };
-  return <Modal title="Ajouter une recette" onClose={onClose}>
-    <Field label="Description"><input style={inputStyle} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Vente de matériel usagé" /></Field>
-    <Field label="Catégorie"><input style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ex: Vente, Prestation, Autre" /></Field>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Montant (FCFA)"><input type="number" style={inputStyle} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
-      <Field label="Date"><input type="date" style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-    </div>
-    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
-  </Modal>;
-}
-
-// ---------- Dépenses ----------
-function Depenses({ data, run, busy }) {
-  const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
-  const [from, setFrom] = useState(firstOfMonth());
-  const [to, setTo] = useState(todayISO());
-  const [modal, setModal] = useState(false);
-
-  const list = data.expenses.filter((e) => e.date >= from && e.date <= to).sort((a, b) => (a.date < b.date ? 1 : -1));
-  const total = list.reduce((s, e) => s + e.amount, 0);
-  const remove = (id) => { if (confirm("Supprimer cette dépense ?")) run(() => db.deleteExpense(id)); };
-
-  return <div>
-    <PageBanner icon={Receipt} title="Dépenses" subtitle="Toutes les dépenses, filtrables par date" />
-    <div style={{ display: "flex", gap: 14, marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
-      <Field label="Du"><input type="date" style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-      <Field label="Au"><input type="date" style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
-      <Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Ajouter une dépense</Btn>
-    </div>
-    <Card style={{ marginBottom: 18, maxWidth: 320 }}>
-      <div style={{ fontSize: 12, color: TEXT_MUTED, fontWeight: 700 }}>TOTAL DÉPENSES (PÉRIODE)</div>
-      <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6, color: "#B3261E" }}>{fmt(total)}</div>
-    </Card>
-    <Card style={{ padding: 0 }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
-          {["Date", "Description", "Catégorie", "Montant", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
-        </tr></thead>
-        <tbody>{list.map((e) => <tr key={e.id} style={{ borderTop: "1px solid #F0EEE7" }}>
-          <td style={{ padding: "10px 12px" }}>{fmtDate(e.date)}</td>
-          <td style={{ padding: "10px 12px" }}>{e.description}</td>
-          <td style={{ padding: "10px 12px" }}><Badge text={e.category} bg="#FBEAE8" fg="#B3261E" /></td>
-          <td style={{ padding: "10px 12px", fontWeight: 700 }}>{fmt(e.amount)}</td>
-          <td style={{ padding: "10px 12px", textAlign: "right" }}><Trash2 size={14} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(e.id)} /></td>
-        </tr>)}</tbody>
-      </table>
-      {list.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune dépense sur cette période.</div>}
-    </Card>
-    {modal && <ExpenseModal onClose={() => setModal(false)} run={run} />}
-  </div>;
-}
-
-function ExpenseModal({ onClose, run }) {
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("Autre");
-  const [date, setDate] = useState(todayISO());
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    if (!description || !amount) return;
-    setSaving(true);
-    try { await run(() => db.createExpense({ description, amount: +amount, category, date })); onClose(); }
-    finally { setSaving(false); }
-  };
-  return <Modal title="Ajouter une dépense" onClose={onClose}>
-    <Field label="Description"><input style={inputStyle} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Carburant camion" /></Field>
-    <Field label="Catégorie"><input style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ex: Transport, Entretien, Salaires" /></Field>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Montant (FCFA)"><input type="number" style={inputStyle} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
-      <Field label="Date"><input type="date" style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-    </div>
-    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
-  </Modal>;
 }
 
 // ---------- Inventory ----------
@@ -724,8 +290,7 @@ function Inventory({ data, run, busy }) {
   const remove = (id) => { if (confirm("Supprimer cet article ?")) run(() => db.deleteInventoryItem(id)); };
 
   return <div>
-    <PageBanner icon={Package} title="Inventaire" subtitle="Articles, disponibilité et prix" />
-    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal({})}>Ajouter un article</Btn>}>&nbsp;</SectionTitle>
+    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal({})}>Ajouter un article</Btn>}>Inventaire</SectionTitle>
     <div style={{ marginBottom: 12, display: "flex", gap: 10, alignItems: "center" }}>
       <span style={{ fontSize: 12.5, fontWeight: 700, color: "#5B564C" }}>Vérifier disponibilité au :</span>
       <input type="date" value={checkDate} onChange={(e) => setCheckDate(e.target.value)} style={{ ...inputStyle, width: 160 }} />
@@ -733,7 +298,7 @@ function Inventory({ data, run, busy }) {
     <Card style={{ padding: 0 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
         <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
-          {["Article", "Catégorie", "Stock total", "Dispo (date choisie)", "Prix/jour", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11.5, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
+          {["Article", "Catégorie", "Stock total", "Dispo (date choisie)", "Prix/jour", ""].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11.5, color: "#8A857A", fontWeight: 700 }}>{h}</th>)}
         </tr></thead>
         <tbody>{data.inventory.map((i) => { const avail = availability(i); return <tr key={i.id} style={{ borderTop: "1px solid #F0EEE7" }}>
           <td style={{ padding: "10px 12px", fontWeight: 600 }}>{i.name}</td>
@@ -754,31 +319,19 @@ function Inventory({ data, run, busy }) {
 function ItemModal({ item, onClose, onSave }) {
   const [f, setF] = useState({ name: "", category: "", total: 0, unit: 0, low: 1, photo: null, ...item });
   const handlePhoto = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setF((s) => ({ ...s, photo: reader.result })); reader.readAsDataURL(file); };
-  const handleNumber = (field) => (e) => {
-    const v = e.target.value;
-    setF((s) => ({ ...s, [field]: v === "" ? "" : v.replace(/^0+(?=\d)/, "") }));
-  };
-  const save = () => {
-    onSave({
-      ...f,
-      total: parseInt(f.total, 10) || 0,
-      unit: parseInt(f.unit, 10) || 0,
-      low: parseInt(f.low, 10) || 0,
-    });
-  };
   return <Modal title={item.id ? "Modifier l'article" : "Nouvel article"} onClose={onClose}>
     <Field label="Nom"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
     <Field label="Catégorie"><input style={inputStyle} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Quantité totale"><input type="number" style={inputStyle} value={f.total} onChange={handleNumber("total")} /></Field>
-      <Field label="Prix unitaire / jour (FCFA)"><input type="number" style={inputStyle} value={f.unit} onChange={handleNumber("unit")} /></Field>
+      <Field label="Quantité totale"><input type="number" style={inputStyle} value={f.total} onChange={(e) => setF({ ...f, total: +e.target.value })} /></Field>
+      <Field label="Prix unitaire / jour (FCFA)"><input type="number" style={inputStyle} value={f.unit} onChange={(e) => setF({ ...f, unit: +e.target.value })} /></Field>
     </div>
-    <Field label="Seuil d'alerte stock faible"><input type="number" style={inputStyle} value={f.low} onChange={handleNumber("low")} /></Field>
+    <Field label="Seuil d'alerte stock faible"><input type="number" style={inputStyle} value={f.low} onChange={(e) => setF({ ...f, low: +e.target.value })} /></Field>
     <Field label="Photo">
       <input type="file" accept="image/*" onChange={handlePhoto} style={{ fontSize: 12.5 }} />
       {f.photo && <img src={f.photo} alt="" style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6, marginTop: 8 }} />}
     </Field>
-    <Btn onClick={save}>Enregistrer</Btn>
+    <Btn onClick={() => onSave(f)}>Enregistrer</Btn>
   </Modal>;
 }
 
@@ -786,24 +339,21 @@ function ItemModal({ item, onClose, onSave }) {
 function Reservations({ data, run, busy }) {
   const [modal, setModal] = useState(false);
   const [openId, setOpenId] = useState(null);
-  const [editRes, setEditRes] = useState(null);
   const [filter, setFilter] = useState("Tous");
   const list = data.reservations.filter((r) => filter === "Tous" || r.status === filter).slice().reverse();
-  const remove = (id) => { if (confirm("Supprimer cette réservation ? Cette action est irréversible.")) run(() => db.deleteReservation(id)); };
 
   return <div>
-    <PageBanner icon={CalendarDays} title="Réservations" subtitle="Commandes et suivi des paiements" />
-    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Nouvelle commande (saisie manuelle)</Btn>}>&nbsp;</SectionTitle>
+    <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Nouvelle commande (saisie manuelle)</Btn>}>Réservations</SectionTitle>
     <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
       {["Tous", ...STATUS_FLOW].map((s) => <div key={s} onClick={() => setFilter(s)} style={{ padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: filter === s ? "#1F6F4B" : "#F1EFE8", color: filter === s ? "#fff" : "#5B564C" }}>{s}</div>)}
     </div>
     <div style={{ display: "grid", gap: 10 }}>
       {list.map((r) => {
-        const total = reservationTotal(r);
+        const total = r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
         const paid = r.payments.reduce((s, p) => s + p.amount, 0);
         return <Card key={r.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-            <div onClick={() => setOpenId(r.id)} style={{ cursor: "pointer", flex: 1 }}>
+          <div onClick={() => setOpenId(r.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+            <div>
               <div style={{ fontWeight: 800, fontSize: 14.5 }}>{r.clientName} <span style={{ fontWeight: 500, color: "#8A857A", fontSize: 12.5 }}>· {r.startDate} → {r.endDate}</span></div>
               <div style={{ fontSize: 12.5, color: "#5B564C", marginTop: 3 }}>{r.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</div>
             </div>
@@ -811,79 +361,14 @@ function Reservations({ data, run, busy }) {
               <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
               <div style={{ fontSize: 12.5, marginTop: 5, color: paid >= total ? "#1F6F4B" : "#B3261E", fontWeight: 700 }}>{fmt(paid)} / {fmt(total)} payé</div>
             </div>
-            <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
-              <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setEditRes(r)} />
-              <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(r.id)} />
-            </div>
           </div>
         </Card>;
       })}
-      {list.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune commande dans ce filtre.</div></Card>}
+      {list.length === 0 && <Card><div style={{ color: "#8A857A", fontSize: 13.5 }}>Aucune commande dans ce filtre.</div></Card>}
     </div>
     {modal && <NewReservationModal data={data} run={run} onClose={() => setModal(false)} />}
     {openId && <ReservationDetail data={data} run={run} id={openId} onClose={() => setOpenId(null)} />}
-    {editRes && <EditReservationModal data={data} run={run} reservation={editRes} onClose={() => setEditRes(null)} />}
   </div>;
-}
-
-function EditReservationModal({ data, run, reservation, onClose }) {
-  const [selectedItems, setSelectedItems] = useState(() => {
-    const obj = {};
-    reservation.items.forEach((it) => { obj[it.itemId] = it.qty; });
-    return obj;
-  });
-  const [start, setStart] = useState(reservation.startDate);
-  const [end, setEnd] = useState(reservation.endDate);
-  const [address, setAddress] = useState(reservation.address || "");
-  const [zone, setZone] = useState(reservation.zone);
-  const [seasonal, setSeasonal] = useState(reservation.seasonal);
-  const [caution, setCaution] = useState(reservation.caution);
-  const [driverId, setDriverId] = useState(reservation.driverId || "");
-  const [saving, setSaving] = useState(false);
-
-  const submit = async () => {
-    const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => {
-      const inv = data.inventory.find((i) => i.id === itemId);
-      return { itemId, qty, unit: inv ? inv.unit : 0 };
-    });
-    if (items.length === 0 || !start || !end) return;
-    setSaving(true);
-    try {
-      await run(async () => {
-        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0 });
-        await db.updateReservationItems(reservation.id, items);
-      });
-      onClose();
-    } finally { setSaving(false); }
-  };
-
-  return <Modal title={`Modifier la commande — ${reservation.clientName}`} onClose={onClose} width={640}>
-    <Field label="Articles et quantités">
-      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
-        {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
-          <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
-          <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
-        </div>)}
-      </div>
-    </Field>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Date de début"><input type="date" style={inputStyle} value={start} onChange={(e) => setStart(e.target.value)} /></Field>
-      <Field label="Date de fin"><input type="date" style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
-    </div>
-    <Field label="Adresse de livraison"><input style={inputStyle} value={address} onChange={(e) => setAddress(e.target.value)} /></Field>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Zone de livraison"><select style={inputStyle} value={zone} onChange={(e) => setZone(e.target.value)}>{ZONES.map((z) => <option key={z.id} value={z.id}>{z.label} (+{fmt(z.fee)})</option>)}</select></Field>
-      <Field label="Tarification"><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8 }}><input type="checkbox" checked={seasonal} onChange={(e) => setSeasonal(e.target.checked)} /> Haute saison (+20%)</label></Field>
-    </div>
-    <Field label="Livreur">
-      <select style={inputStyle} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
-        <option value="">Non assigné</option>
-        {data.drivers.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.type === "externe" ? "freelance" : "interne"})</option>)}
-      </select>
-    </Field>
-    <Field label="Caution (FCFA)"><input type="number" style={inputStyle} value={caution} onChange={(e) => setCaution(e.target.value)} /></Field>
-    <Btn disabled={saving} onClick={submit}>{saving ? "Enregistrement..." : "Enregistrer les modifications"}</Btn>
-  </Modal>;
 }
 
 function NewReservationModal({ data, run, onClose }) {
@@ -937,7 +422,7 @@ function NewReservationModal({ data, run, onClose }) {
     </Field>
     <Field label="Packs prédéfinis (optionnel)"><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{data.packs.map((p) => <Btn key={p.id} small variant="gold" onClick={() => applyPack(p.id)}>{p.name}</Btn>)}</div></Field>
     <Field label="Articles et quantités">
-      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
+      <div style={{ border: "1px solid #E9E6DE", borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
         {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
           <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
           <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
@@ -980,7 +465,7 @@ function ReservationDetail({ data, run, id, onClose }) {
   const [payMode, setPayMode] = useState("Espèces");
   const [damaged, setDamaged] = useState({});
   if (!r) return null;
-  const total = reservationTotal(r);
+  const total = r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
   const paid = r.payments.reduce((s, p) => s + p.amount, 0);
   const driver = data.drivers.find((d) => d.id === r.driverId);
 
@@ -992,6 +477,7 @@ function ReservationDetail({ data, run, id, onClose }) {
     const damagedTotal = Object.values(damagedByRiId).reduce((s, v) => s + (Number(v) || 0), 0) * 2000;
     run(() => db.closeCheckIn(r.id, damagedByRiId, r.caution - damagedTotal));
   };
+  const printQuote = () => window.print();
 
   return <Modal title={`Commande — ${r.clientName}`} onClose={onClose} width={620}>
     <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -1005,10 +491,7 @@ function ReservationDetail({ data, run, id, onClose }) {
     </Card>
     <Card style={{ marginBottom: 12 }}>
       <div style={{ fontWeight: 800, marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
-        <span>Paiement</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: "#1F6F4B", cursor: "pointer" }} onClick={() => generateQuotePDF(r, data)}>
-          <FileDown size={15} /> Télécharger le devis PDF
-        </span>
+        <span>Paiement</span><Printer size={16} onClick={printQuote} style={{ cursor: "pointer", color: "#5B564C" }} />
       </div>
       <div style={{ fontSize: 13, marginBottom: 8 }}>Total : <b>{fmt(total)}</b> · Payé : <b style={{ color: paid >= total ? "#1F6F4B" : "#B3261E" }}>{fmt(paid)}</b> · Reste : <b>{fmt(Math.max(total - paid, 0))}</b></div>
       {r.payments.map((p) => <div key={p.id} style={{ fontSize: 12.5, color: "#5B564C" }}>• {fmt(p.amount)} — {p.mode} — {p.date}</div>)}
@@ -1047,99 +530,61 @@ function Planning({ data }) {
   const bookedQty = (itemId, day) => data.reservations.filter((r) => r.status !== "Retourné" && day >= r.startDate && day <= r.endDate).reduce((s, r) => s + (r.items.find((i) => i.itemId === itemId)?.qty || 0), 0);
 
   return <div>
-    <PageBanner icon={CalendarDays} title="Planning" subtitle={`Semaine du ${days[0]}`} />
-    <div style={{ display: "flex", gap: 6, marginBottom: 12, justifyContent: "flex-end" }}>
+    <SectionTitle action={<div style={{ display: "flex", gap: 6 }}>
       <Btn small variant="ghost" icon={ChevronLeft} onClick={() => shift(-1)}>Semaine préc.</Btn>
       <Btn small variant="ghost" onClick={() => shift(1)}>Semaine suiv. <ChevronRight size={13} /></Btn>
-    </div>
+    </div>}>Planning — semaine du {days[0]}</SectionTitle>
     <Card style={{ padding: 0, overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-        <thead><tr style={{ background: "#FAF9F5" }}><th style={{ padding: 8, textAlign: "left", fontSize: 11.5, color: TEXT_MUTED }}>Article</th>{days.map((d) => <th key={d} style={{ padding: 8, fontSize: 11, color: TEXT_MUTED }}>{d.slice(5)}</th>)}</tr></thead>
+        <thead><tr style={{ background: "#FAF9F5" }}><th style={{ padding: 8, textAlign: "left", fontSize: 11.5, color: "#8A857A" }}>Article</th>{days.map((d) => <th key={d} style={{ padding: 8, fontSize: 11, color: "#8A857A" }}>{d.slice(5)}</th>)}</tr></thead>
         <tbody>{data.inventory.map((item) => <tr key={item.id} style={{ borderTop: "1px solid #F0EEE7" }}>
           <td style={{ padding: 8, fontWeight: 700 }}>{item.name}</td>
           {days.map((d) => { const q = bookedQty(item.id, d); const ratio = q / item.total; const bg = q === 0 ? "#fff" : ratio >= 1 ? "#F7C9C4" : ratio > 0.6 ? "#FBE3B0" : "#DFF0E8"; return <td key={d} style={{ padding: 8, textAlign: "center", background: bg, fontWeight: q > 0 ? 700 : 400 }}>{q > 0 ? `${q}/${item.total}` : "—"}</td>; })}
         </tr>)}</tbody>
       </table>
     </Card>
-    <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 8 }}>Vert = disponibilité confortable · Orange = tension &gt;60% · Rouge = complet</div>
+    <div style={{ fontSize: 11.5, color: "#8A857A", marginTop: 8 }}>Vert = disponibilité confortable · Orange = tension &gt;60% · Rouge = complet</div>
   </div>;
 }
 
 // ---------- Clients ----------
 function Clients({ data, run }) {
-  const [modal, setModal] = useState(null);
   const historyFor = (clientId) => data.reservations.filter((r) => r.clientId === clientId);
-  const remove = (id) => {
-    if (data.reservations.some((r) => r.clientId === id)) {
-      alert("Impossible de supprimer : ce client a des réservations associées.");
-      return;
-    }
-    if (confirm("Supprimer ce client ?")) run(() => db.deleteClient(id));
-  };
   return <div>
-    <PageBanner icon={Users} title="Clients" subtitle="Historique et vigilance" />
+    <SectionTitle>Clients</SectionTitle>
     <div style={{ display: "grid", gap: 10 }}>
       {data.clients.map((c) => {
         const hist = historyFor(c.id);
         const spent = hist.reduce((s, r) => s + r.payments.reduce((s2, p) => s2 + p.amount, 0), 0);
         const damages = hist.filter((r) => (r.damaged || []).some((d) => d.qty > 0)).length;
         return <Card key={c.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <div style={{ fontWeight: 800 }}>{c.name} {c.flagged && <Badge text="À surveiller" bg="#FBEAE8" fg="#B3261E" />}</div>
               <div style={{ fontSize: 12.5, color: "#8A857A", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {c.phone}</div>
             </div>
             <div style={{ textAlign: "right", fontSize: 12.5 }}><div>Total payé : <b>{fmt(spent)}</b></div><div>{hist.length} commande(s) · {damages} avec casse</div></div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-              <Btn small variant={c.flagged ? "danger" : "ghost"} onClick={() => run(() => db.setClientFlag(c.id, !c.flagged))}>{c.flagged ? "Retirer vigilance" : "Mettre en vigilance"}</Btn>
-              <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(c)} />
-              <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(c.id)} />
-            </div>
+            <Btn small variant={c.flagged ? "danger" : "ghost"} onClick={() => run(() => db.setClientFlag(c.id, !c.flagged))}>{c.flagged ? "Retirer vigilance" : "Mettre en vigilance"}</Btn>
           </div>
         </Card>;
       })}
     </div>
-    {modal && <ClientEditModal client={modal} onClose={() => setModal(null)} run={run} />}
   </div>;
-}
-
-function ClientEditModal({ client, onClose, run }) {
-  const [name, setName] = useState(client.name);
-  const [phone, setPhone] = useState(client.phone);
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    if (!name) return;
-    setSaving(true);
-    try { await run(() => db.updateClient(client.id, name, phone)); onClose(); }
-    finally { setSaving(false); }
-  };
-  return <Modal title="Modifier le client" onClose={onClose}>
-    <Field label="Nom"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
-    <Field label="Téléphone"><input style={inputStyle} value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
-    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
-  </Modal>;
 }
 
 // ---------- Drivers ----------
 function Drivers({ data, run }) {
   const [modal, setModal] = useState(false);
-  const [editDriver, setEditDriver] = useState(null);
   const [f, setF] = useState({ name: "", phone: "", type: "interne", fee: 0 });
   const add = () => { if (!f.name) return; run(() => db.createDriver(f.name, f.phone, f.type, +f.fee)); setF({ name: "", phone: "", type: "interne", fee: 0 }); setModal(false); };
-  const remove = (id) => { if (confirm("Supprimer ce livreur ? Les réservations liées seront désassignées.")) run(() => db.deleteDriver(id)); };
   return <div>
-    <PageBanner icon={Truck} title="Livreurs" subtitle="Internes et freelances" />
-    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal(true)}>Ajouter un livreur</Btn>}>&nbsp;</SectionTitle>
+    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal(true)}>Ajouter un livreur</Btn>}>Livreurs</SectionTitle>
     <div style={{ display: "grid", gap: 10 }}>
       {data.drivers.map((d) => <Card key={d.id}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div><div style={{ fontWeight: 800 }}>{d.name}</div><div style={{ fontSize: 12.5, color: "#8A857A", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {d.phone}</div></div>
           <Badge text={d.type === "externe" ? "Freelance / externe" : "Interne"} bg={d.type === "externe" ? "#FBF0DA" : "#DCEAFB"} fg={d.type === "externe" ? "#9A6A00" : "#1D5FA8"} />
           {d.type === "externe" && <div style={{ fontSize: 12.5 }}>Frais/course : {fmt(d.fee)}</div>}
-          <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
-            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setEditDriver(d)} />
-            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(d.id)} />
-          </div>
         </div>
       </Card>)}
     </div>
@@ -1150,136 +595,5 @@ function Drivers({ data, run }) {
       {f.type === "externe" && <Field label="Frais par course (FCFA)"><input type="number" style={inputStyle} value={f.fee} onChange={(e) => setF({ ...f, fee: e.target.value })} /></Field>}
       <Btn onClick={add}>Ajouter</Btn>
     </Modal>}
-    {editDriver && <DriverEditModal driver={editDriver} onClose={() => setEditDriver(null)} run={run} />}
   </div>;
-}
-
-function DriverEditModal({ driver, onClose, run }) {
-  const [f, setF] = useState({ ...driver });
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    if (!f.name) return;
-    setSaving(true);
-    try { await run(() => db.updateDriver(driver.id, f.name, f.phone, f.type, +f.fee || 0)); onClose(); }
-    finally { setSaving(false); }
-  };
-  return <Modal title="Modifier le livreur" onClose={onClose}>
-    <Field label="Nom"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-    <Field label="Téléphone"><input style={inputStyle} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
-    <Field label="Type"><select style={inputStyle} value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="interne">Interne (salarié)</option><option value="externe">Freelance / externe</option></select></Field>
-    {f.type === "externe" && <Field label="Frais par course (FCFA)"><input type="number" style={inputStyle} value={f.fee} onChange={(e) => setF({ ...f, fee: e.target.value })} /></Field>}
-    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
-  </Modal>;
-}
-
-// ---------- Settings (personnalisation devis) ----------
-function SettingsPage({ data, run, busy }) {
-  const [f, setF] = useState({ ...data.settings });
-  const [saved, setSaved] = useState(false);
-
-  const handleLogo = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setF((s) => ({ ...s, logo: reader.result }));
-    reader.readAsDataURL(file);
-  };
-
-  const save = () => {
-    setSaved(false);
-    run(() => db.saveSettings(f)).then(() => setSaved(true));
-  };
-
-  return <div>
-    <PageBanner icon={SettingsIcon} title="Paramètres" subtitle="Personnalisation du devis" />
-    <Card style={{ maxWidth: 480 }}>
-      <Field label="Nom de l'entreprise (en-tête du devis)">
-        <input style={inputStyle} value={f.companyName} onChange={(e) => { setF({ ...f, companyName: e.target.value }); setSaved(false); }} />
-      </Field>
-      <Field label="Téléphone / contact (affiché sous le nom)">
-        <input style={inputStyle} placeholder="Ex: +225 07 00 00 00 00" value={f.phone} onChange={(e) => { setF({ ...f, phone: e.target.value }); setSaved(false); }} />
-      </Field>
-      <Field label="Mention en pied de page">
-        <input style={inputStyle} value={f.footerText} onChange={(e) => { setF({ ...f, footerText: e.target.value }); setSaved(false); }} />
-      </Field>
-      <Field label="Logo (affiché en haut à gauche du devis)">
-        <input type="file" accept="image/*" onChange={handleLogo} style={{ fontSize: 12.5 }} />
-        {f.logo && <div style={{ marginTop: 10 }}>
-          <img src={f.logo} alt="Logo" style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 6, border: `1px solid ${BORDER}`, background: "#fff", padding: 4 }} />
-          <div style={{ marginTop: 6 }}><Btn small variant="ghost" onClick={() => { setF({ ...f, logo: null }); setSaved(false); }}>Retirer le logo</Btn></div>
-        </div>}
-      </Field>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-        <Btn disabled={busy} onClick={save}>{busy ? "Enregistrement..." : "Enregistrer"}</Btn>
-        {saved && <span style={{ fontSize: 12.5, color: "#1F6F4B", fontWeight: 700 }}>✓ Enregistré</span>}
-      </div>
-    </Card>
-  </div>;
-}
-
-// ---------- Utilisateurs (accès personnalisables) ----------
-function UsersPage({ data, run, currentUser }) {
-  const [modal, setModal] = useState(null);
-  const remove = (id) => {
-    if (id === currentUser.id) { alert("Tu ne peux pas supprimer ton propre compte."); return; }
-    if (confirm("Supprimer cet utilisateur ?")) run(() => db.deleteUser(id));
-  };
-  return <div>
-    <PageBanner icon={UserCog} title="Utilisateurs" subtitle="Comptes et droits d'accès" />
-    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un utilisateur</Btn>}>&nbsp;</SectionTitle>
-    <div style={{ display: "grid", gap: 10 }}>
-      {data.users.map((u) => <Card key={u.id}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontWeight: 800 }}>{u.name} {u.id === currentUser.id && <Badge text="Toi" bg="#DCEAFB" fg="#1D5FA8" />}</div>
-            <div style={{ fontSize: 12.5, color: "#8A857A" }}>@{u.username}</div>
-            <div style={{ fontSize: 11.5, color: "#8A857A", marginTop: 4 }}>
-              Accès : {MODULES.filter((m) => u.permissions?.[m.id]).map((m) => m.label).join(", ") || "Aucun"}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(u)} />
-            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(u.id)} />
-          </div>
-        </div>
-      </Card>)}
-      {data.users.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun utilisateur (la table 'users' a-t-elle bien été créée dans Supabase ?)</div></Card>}
-    </div>
-    {modal !== null && <UserModal user={modal} onClose={() => setModal(null)} run={run} />}
-  </div>;
-}
-
-function UserModal({ user, onClose, run }) {
-  const defaultPerms = { dashboard: false, bilan: false, revenues: false, expenses: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
-  const [f, setF] = useState({ name: "", username: "", password: "", permissions: defaultPerms, ...user, permissions: { ...defaultPerms, ...(user.permissions || {}) } });
-  const [saving, setSaving] = useState(false);
-  const togglePerm = (id) => setF((s) => ({ ...s, permissions: { ...s.permissions, [id]: !s.permissions?.[id] } }));
-
-  const save = async () => {
-    if (!f.name || !f.username) return;
-    if (!f.id && !f.password) { alert("Un mot de passe est requis pour un nouvel utilisateur."); return; }
-    setSaving(true);
-    try {
-      await run(() => (f.id ? db.updateUser(f) : db.createUser(f)));
-      onClose();
-    } finally { setSaving(false); }
-  };
-
-  return <Modal title={user.id ? "Modifier l'utilisateur" : "Nouvel utilisateur"} onClose={onClose}>
-    <Field label="Nom complet"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-    <Field label="Nom d'utilisateur"><input style={inputStyle} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field>
-    <Field label={f.id ? "Nouveau mot de passe (laisser vide pour ne pas changer)" : "Mot de passe"}>
-      <input type="password" style={inputStyle} value={f.password || ""} onChange={(e) => setF({ ...f, password: e.target.value })} />
-    </Field>
-    <Field label="Modules accessibles">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-        {MODULES.map((m) => (
-          <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-            <input type="checkbox" checked={!!f.permissions?.[m.id]} onChange={() => togglePerm(m.id)} /> {m.label}
-          </label>
-        ))}
-      </div>
-    </Field>
-    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
-  </Modal>;
 }
