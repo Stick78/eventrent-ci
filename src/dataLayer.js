@@ -1,11 +1,37 @@
 import { supabase } from "./supabaseClient";
 
+// ---------- authentification ----------
+export async function signUp(email, password) {
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return data;
+}
+export async function signIn(email, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
+}
+export async function signOut() {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+export async function getSession() {
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+}
+export function onAuthStateChange(callback) {
+  const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    callback(session);
+  });
+  return () => listener.subscription.unsubscribe();
+}
+
 // ---------- mapping helpers (snake_case DB -> camelCase UI) ----------
 const mapInventory = (r) => ({
   id: r.id, name: r.name, category: r.category, total: r.total_qty,
   unit: Number(r.unit_price), low: r.low_stock_threshold, photo: r.photo_url,
 });
-const mapClient = (r) => ({ id: r.id, name: r.name, phone: r.phone, flagged: r.flagged, notes: r.notes || "", createdAt: r.created_at ? r.created_at.slice(0, 10) : null });
+const mapClient = (r) => ({ id: r.id, name: r.name, phone: r.phone, flagged: r.flagged, notes: r.notes || "" });
 const mapDriver = (r) => ({ id: r.id, name: r.name, phone: r.phone, type: r.type, fee: Number(r.fee_per_delivery) });
 const mapPack = (r) => ({ id: r.id, name: r.name, items: (r.pack_items || []).map((pi) => ({ itemId: pi.item_id, qty: pi.qty })) });
 const mapReservation = (r) => ({
@@ -30,14 +56,6 @@ const mapReservation = (r) => ({
   payments: (r.payments || []).map((p) => ({ id: p.id, amount: Number(p.amount), mode: p.mode, date: (p.paid_at || "").slice(0, 10) })),
   damaged: (r.reservation_items || []).filter((ri) => ri.damaged_qty > 0).map((ri) => ({ itemId: ri.item_id, qty: ri.damaged_qty })),
 });
-const mapSettings = (r) => ({
-  id: r.id,
-  companyName: r.company_name || "EventRent CI",
-  phone: r.phone || "",
-  footerText: r.footer_text || "",
-  logo: r.logo_base64 || null,
-});
-const mapUser = (r) => ({ id: r.id, name: r.name, username: r.username, permissions: r.permissions || {} });
 
 const RESERVATION_SELECT = `
   id, client_id, driver_id, start_date, end_date, address, zone, seasonal, status,
@@ -57,20 +75,12 @@ export async function fetchAll() {
   ]);
   const errs = [inv, cli, drv, pks, res].filter((x) => x.error);
   if (errs.length) throw errs[0].error;
-  const settings = await fetchSettings();
-  const users = await fetchUsers();
-  const additionalRevenues = await fetchAdditionalRevenues();
-  const expenses = await fetchExpenses();
   return {
     inventory: inv.data.map(mapInventory),
     clients: cli.data.map(mapClient),
     drivers: drv.data.map(mapDriver),
     packs: pks.data.map(mapPack),
     reservations: res.data.map(mapReservation),
-    settings,
-    users,
-    additionalRevenues,
-    expenses,
   };
 }
 
@@ -159,167 +169,5 @@ export async function closeCheckIn(reservationId, damagedByRiId, cautionReturned
   const { error } = await supabase.from("reservations").update({
     status: "Retourné", caution_returned: cautionReturned,
   }).eq("id", reservationId);
-  if (error) throw error;
-}
-
-// ---------- settings (personnalisation devis) ----------
-export async function fetchSettings() {
-  try {
-    const { data, error } = await supabase.from("settings").select("*").limit(1).maybeSingle();
-    if (error || !data) {
-      return { id: null, companyName: "EventRent CI", phone: "", footerText: "Devis valable 15 jours à compter de la date d'émission.", logo: null };
-    }
-    return mapSettings(data);
-  } catch (e) {
-    console.error("Impossible de charger les paramètres (table 'settings' absente ?) :", e);
-    return { id: null, companyName: "EventRent CI", phone: "", footerText: "Devis valable 15 jours à compter de la date d'émission.", logo: null };
-  }
-}
-
-export async function saveSettings(settings) {
-  const row = {
-    company_name: settings.companyName,
-    phone: settings.phone,
-    footer_text: settings.footerText,
-    logo_base64: settings.logo,
-    updated_at: new Date().toISOString(),
-  };
-  if (settings.id) {
-    const { error } = await supabase.from("settings").update(row).eq("id", settings.id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase.from("settings").insert(row);
-    if (error) throw error;
-  }
-}
-
-// ---------- users (gestion des accès) ----------
-export async function fetchUsers() {
-  try {
-    const { data, error } = await supabase.from("users").select("id, name, username, permissions").order("name");
-    if (error) throw error;
-    return data.map(mapUser);
-  } catch (e) {
-    console.error("Impossible de charger les utilisateurs (table 'users' absente ?) :", e);
-    return [];
-  }
-}
-
-export async function verifyLogin(username, password) {
-  const { data, error } = await supabase
-    .from("users")
-    .select("id, name, username, permissions")
-    .eq("username", username)
-    .eq("password", password)
-    .maybeSingle();
-  if (error || !data) return null;
-  return mapUser(data);
-}
-
-export async function createUser(user) {
-  const { error } = await supabase.from("users").insert({
-    name: user.name, username: user.username, password: user.password, permissions: user.permissions || {},
-  });
-  if (error) throw error;
-}
-
-export async function updateUser(user) {
-  const row = { name: user.name, username: user.username, permissions: user.permissions || {} };
-  if (user.password) row.password = user.password;
-  const { error } = await supabase.from("users").update(row).eq("id", user.id);
-  if (error) throw error;
-}
-
-export async function deleteUser(id) {
-  const { error } = await supabase.from("users").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// ---------- réservations : modification / suppression ----------
-export async function updateReservationInfo(reservationId, { startDate, endDate, address, zone, seasonal, driverId, caution }) {
-  const { error } = await supabase.from("reservations").update({
-    start_date: startDate, end_date: endDate, address, zone, seasonal,
-    driver_id: driverId || null, caution: caution || 0,
-  }).eq("id", reservationId);
-  if (error) throw error;
-}
-
-export async function updateReservationItems(reservationId, items) {
-  const { error: delErr } = await supabase.from("reservation_items").delete().eq("reservation_id", reservationId);
-  if (delErr) throw delErr;
-  if (items.length > 0) {
-    const rows = items.map((it) => ({ reservation_id: reservationId, item_id: it.itemId, qty: it.qty, unit_price: it.unit }));
-    const { error } = await supabase.from("reservation_items").insert(rows);
-    if (error) throw error;
-  }
-}
-
-export async function deleteReservation(reservationId) {
-  await supabase.from("payments").delete().eq("reservation_id", reservationId);
-  await supabase.from("reservation_items").delete().eq("reservation_id", reservationId);
-  const { error } = await supabase.from("reservations").delete().eq("id", reservationId);
-  if (error) throw error;
-}
-
-// ---------- clients : modification / suppression ----------
-export async function updateClient(id, name, phone) {
-  const { error } = await supabase.from("clients").update({ name, phone }).eq("id", id);
-  if (error) throw error;
-}
-
-export async function deleteClient(id) {
-  const { error } = await supabase.from("clients").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// ---------- livreurs : modification / suppression ----------
-export async function updateDriver(id, name, phone, type, fee) {
-  const { error } = await supabase.from("drivers").update({ name, phone, type, fee_per_delivery: fee || 0 }).eq("id", id);
-  if (error) throw error;
-}
-
-export async function deleteDriver(id) {
-  await supabase.from("reservations").update({ driver_id: null }).eq("driver_id", id);
-  const { error } = await supabase.from("drivers").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// ---------- recettes additionnelles (hors location) ----------
-export async function fetchAdditionalRevenues() {
-  try {
-    const { data, error } = await supabase.from("additional_revenues").select("*").order("date", { ascending: false });
-    if (error) throw error;
-    return data.map((r) => ({ id: r.id, description: r.description, amount: Number(r.amount), category: r.category || "Autre", date: r.date }));
-  } catch (e) {
-    console.error("Impossible de charger les recettes additionnelles (table 'additional_revenues' absente ?) :", e);
-    return [];
-  }
-}
-export async function createAdditionalRevenue({ description, amount, category, date }) {
-  const { error } = await supabase.from("additional_revenues").insert({ description, amount, category: category || "Autre", date });
-  if (error) throw error;
-}
-export async function deleteAdditionalRevenue(id) {
-  const { error } = await supabase.from("additional_revenues").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// ---------- dépenses ----------
-export async function fetchExpenses() {
-  try {
-    const { data, error } = await supabase.from("expenses").select("*").order("date", { ascending: false });
-    if (error) throw error;
-    return data.map((r) => ({ id: r.id, description: r.description, amount: Number(r.amount), category: r.category || "Autre", date: r.date }));
-  } catch (e) {
-    console.error("Impossible de charger les dépenses (table 'expenses' absente ?) :", e);
-    return [];
-  }
-}
-export async function createExpense({ description, amount, category, date }) {
-  const { error } = await supabase.from("expenses").insert({ description, amount, category: category || "Autre", date });
-  if (error) throw error;
-}
-export async function deleteExpense(id) {
-  const { error } = await supabase.from("expenses").delete().eq("id", id);
   if (error) throw error;
 }
