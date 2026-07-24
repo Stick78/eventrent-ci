@@ -52,6 +52,16 @@ export async function signUpAccount({ companyName, adminName, username, password
   const { data: account, error: e1 } = await supabase.from("accounts").insert({ name: companyName }).select().single();
   if (e1) throw e1;
 
+  // Crée directement les paramètres du devis avec le nom de l'entreprise
+  const { error: eSettings } = await supabase.from("settings").insert({
+    company_name: companyName,
+    phone: "",
+    footer_text: "Devis valable 15 jours à compter de la date d'émission.",
+    logo_base64: null,
+    account_id: account.id,
+  });
+  if (eSettings) console.error("Impossible de créer les paramètres par défaut :", eSettings);
+
   const fullPerms = { dashboard: true, bilan: true, revenues: true, expenses: true, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: true, users: true };
   const { data: user, error: e2 } = await supabase.from("users").insert({
     name: adminName, username, password, permissions: fullPerms, account_id: account.id,
