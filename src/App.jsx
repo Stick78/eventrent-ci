@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank
+  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, Building2, Mail, Lock, User as UserIcon
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -165,30 +165,41 @@ function generateQuotePDF(r, data) {
 
 // ---------- App ----------
 export default function App() {
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
   const [tab, setTab] = useState("reservations");
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+
+  // Restauration de session au chargement
+  useEffect(() => {
+    const savedId = localStorage.getItem("eventrent_user_id");
+    if (!savedId) { setCheckingSession(false); return; }
+    db.fetchUserById(savedId)
+      .then((user) => {
+        if (user) setCurrentUser(user);
+        else localStorage.removeItem("eventrent_user_id");
+      })
+      .catch(() => localStorage.removeItem("eventrent_user_id"))
+      .finally(() => setCheckingSession(false));
+  }, []);
+
+  const accountId = currentUser?.accountId;
 
   const refresh = useCallback(async () => {
+    if (!accountId) return;
     try {
-      const d = await db.fetchAll();
+      const d = await db.fetchAll(accountId);
       setData(d);
       setError(null);
-      const savedId = localStorage.getItem("eventrent_user_id");
-      if (savedId) {
-        const found = (d.users || []).find((u) => u.id === savedId);
-        if (found) setCurrentUser(found);
-        else localStorage.removeItem("eventrent_user_id");
-      }
     } catch (e) {
       console.error(e);
       setError(e.message || "Erreur de connexion à la base");
     }
-  }, []);
+  }, [accountId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { if (currentUser) refresh(); }, [currentUser, refresh]);
 
   const run = async (fn) => {
     setBusy(true);
@@ -200,10 +211,12 @@ export default function App() {
   const handleLogin = (user) => {
     localStorage.setItem("eventrent_user_id", user.id);
     setCurrentUser(user);
+    setData(null);
   };
   const handleLogout = useCallback(() => {
     localStorage.removeItem("eventrent_user_id");
     setCurrentUser(null);
+    setData(null);
   }, []);
 
   useEffect(() => {
@@ -224,14 +237,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
-  if (!data) {
+  if (checkingSession) {
     return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, color: TEXT_MUTED, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
       <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement...
     </div>;
   }
 
   if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <AuthContainer onLogin={handleLogin} />;
+  }
+
+  if (!data) {
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, color: TEXT_MUTED, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+      <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement des données...
+    </div>;
   }
 
   const nav = MODULES.filter((m) => currentUser.permissions?.[m.id]);
@@ -291,22 +310,48 @@ export default function App() {
         )}
         {tab === "dashboard" && hasAccess("dashboard") && <Dashboard data={data} />}
         {tab === "bilan" && hasAccess("bilan") && <Bilan data={data} />}
-        {tab === "revenues" && hasAccess("revenues") && <Recettes data={data} run={run} busy={busy} />}
-        {tab === "expenses" && hasAccess("expenses") && <Depenses data={data} run={run} busy={busy} />}
-        {tab === "inventory" && hasAccess("inventory") && <Inventory data={data} run={run} busy={busy} />}
-        {tab === "reservations" && hasAccess("reservations") && <Reservations data={data} run={run} busy={busy} />}
+        {tab === "revenues" && hasAccess("revenues") && <Recettes data={data} run={run} busy={busy} accountId={accountId} />}
+        {tab === "expenses" && hasAccess("expenses") && <Depenses data={data} run={run} busy={busy} accountId={accountId} />}
+        {tab === "inventory" && hasAccess("inventory") && <Inventory data={data} run={run} busy={busy} accountId={accountId} />}
+        {tab === "reservations" && hasAccess("reservations") && <Reservations data={data} run={run} busy={busy} accountId={accountId} />}
         {tab === "planning" && hasAccess("planning") && <Planning data={data} />}
-        {tab === "clients" && hasAccess("clients") && <Clients data={data} run={run} />}
-        {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
-        {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
-        {tab === "users" && hasAccess("users") && <UsersPage data={data} run={run} currentUser={currentUser} />}
+        {tab === "clients" && hasAccess("clients") && <Clients data={data} run={run} accountId={accountId} />}
+        {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} accountId={accountId} />}
+        {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} accountId={accountId} />}
+        {tab === "users" && hasAccess("users") && <UsersPage data={data} run={run} currentUser={currentUser} accountId={accountId} />}
         {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
       </div>
     </div>
   );
 }
 
-// ---------- Connexion ----------
+// ---------- Connexion / Inscription entreprise ----------
+function AuthContainer({ onLogin }) {
+  const [mode, setMode] = useState("login"); // login | signup
+
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", padding: 20 }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360, maxWidth: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff" }}>ER</div>
+        <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+      </div>
+      <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>
+        {mode === "login" ? "Connexion" : "Créer le compte de mon entreprise"}
+      </div>
+
+      {mode === "login" ? <LoginScreen onLogin={onLogin} /> : <SignupScreen onLogin={onLogin} />}
+
+      <div style={{ textAlign: "center", marginTop: 18, fontSize: 12.5, color: "#5B564C" }}>
+        {mode === "login" ? (
+          <>Nouvelle entreprise ? <span style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }} onClick={() => setMode("signup")}>Créer mon compte</span></>
+        ) : (
+          <>Déjà un compte ? <span style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }} onClick={() => setMode("login")}>Se connecter</span></>
+        )}
+      </div>
+    </div>
+  </div>;
+}
+
 function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -327,22 +372,58 @@ function LoginScreen({ onLogin }) {
     }
   };
 
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
-    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff" }}>ER</div>
-        <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+  return <div>
+    <Field label="Nom d'utilisateur">
+      <input style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
+    </Field>
+    <Field label="Mot de passe">
+      <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+    </Field>
+    {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+    <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
+  </div>;
+}
+
+function SignupScreen({ onLogin }) {
+  const [companyName, setCompanyName] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if (!companyName || !adminName || !username || !password) { setError("Tous les champs sont requis."); return; }
+    if (password.length < 4) { setError("Le mot de passe doit faire au moins 4 caractères."); return; }
+    setError(""); setLoading(true);
+    try {
+      const user = await db.signUpAccount({ companyName, adminName, username: username.trim(), password });
+      onLogin(user);
+    } catch (e) {
+      console.error(e);
+      if (e.message && e.message.includes("duplicate")) setError("Ce nom d'utilisateur est déjà pris.");
+      else setError("Erreur lors de la création du compte. Réessaie.");
+      setLoading(false);
+    }
+  };
+
+  return <div>
+    <Field label="Nom de l'entreprise">
+      <div style={{ position: "relative" }}>
+        <input style={inputStyle} value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Ex: Tym Event" autoFocus />
       </div>
-      <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Connexion</div>
-      <Field label="Nom d'utilisateur">
-        <input style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
-      </Field>
-      <Field label="Mot de passe">
-        <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
-      </Field>
-      {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
-      <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
-    </div>
+    </Field>
+    <Field label="Votre nom complet">
+      <input style={inputStyle} value={adminName} onChange={(e) => setAdminName(e.target.value)} placeholder="Ex: Eric Assa" />
+    </Field>
+    <Field label="Nom d'utilisateur (pour vous connecter)">
+      <input style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} />
+    </Field>
+    <Field label="Mot de passe">
+      <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+    </Field>
+    {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+    <Btn disabled={loading} onClick={submit}>{loading ? "Création..." : "Créer mon entreprise"}</Btn>
   </div>;
 }
 
@@ -355,7 +436,7 @@ function SectionTitle({ children, action }) {
 }
 function Btn({ children, onClick, variant = "primary", small, icon: Icon, disabled }) {
   const styles = { primary: { background: "#1F6F4B", color: "#fff" }, ghost: { background: "#F1F2F6", color: TEXT_DARK }, danger: { background: "#FBEAE8", color: "#B3261E" }, gold: { background: "#C9A227", color: "#1F2421" } };
-  return <button disabled={disabled} onClick={onClick} style={{ ...styles[variant], opacity: disabled ? 0.6 : 1, border: "none", borderRadius: 8, padding: small ? "6px 10px" : "9px 14px", fontSize: small ? 12.5 : 13.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+  return <button disabled={disabled} onClick={onClick} style={{ ...styles[variant], opacity: disabled ? 0.6 : 1, border: "none", borderRadius: 8, padding: small ? "6px 10px" : "9px 14px", fontSize: small ? 12.5 : 13.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center" }}>
     {Icon && <Icon size={small ? 13 : 15} />} {children}
   </button>;
 }
@@ -464,7 +545,7 @@ function Dashboard({ data }) {
   }, [data]);
 
   return <div>
-    <PageBanner icon={LayoutDashboard} title="Tableau de bord" subtitle={`EventRent CI · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}`} />
+    <PageBanner icon={LayoutDashboard} title="Tableau de bord" subtitle={`${data.settings?.companyName || "EventRent CI"} · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}`} />
 
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 14 }}>
       <KpiCard icon={Wallet} label="Revenus du mois" value={fmt(revenueMonth)} color="#2F6FED" />
@@ -578,7 +659,7 @@ function Bilan({ data }) {
 }
 
 // ---------- Recettes ----------
-function Recettes({ data, run, busy }) {
+function Recettes({ data, run, busy, accountId }) {
   const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(todayISO());
@@ -620,11 +701,11 @@ function Recettes({ data, run, busy }) {
       </table>
       {all.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune recette sur cette période.</div>}
     </Card>
-    {modal && <RevenueModal onClose={() => setModal(false)} run={run} />}
+    {modal && <RevenueModal onClose={() => setModal(false)} run={run} accountId={accountId} />}
   </div>;
 }
 
-function RevenueModal({ onClose, run }) {
+function RevenueModal({ onClose, run, accountId }) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Autre");
@@ -633,7 +714,7 @@ function RevenueModal({ onClose, run }) {
   const save = async () => {
     if (!description || !amount) return;
     setSaving(true);
-    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date })); onClose(); }
+    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date }, accountId)); onClose(); }
     finally { setSaving(false); }
   };
   return <Modal title="Ajouter une recette" onClose={onClose}>
@@ -648,7 +729,7 @@ function RevenueModal({ onClose, run }) {
 }
 
 // ---------- Dépenses ----------
-function Depenses({ data, run, busy }) {
+function Depenses({ data, run, busy, accountId }) {
   const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(todayISO());
@@ -684,11 +765,11 @@ function Depenses({ data, run, busy }) {
       </table>
       {list.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucune dépense sur cette période.</div>}
     </Card>
-    {modal && <ExpenseModal onClose={() => setModal(false)} run={run} />}
+    {modal && <ExpenseModal onClose={() => setModal(false)} run={run} accountId={accountId} />}
   </div>;
 }
 
-function ExpenseModal({ onClose, run }) {
+function ExpenseModal({ onClose, run, accountId }) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Autre");
@@ -697,7 +778,7 @@ function ExpenseModal({ onClose, run }) {
   const save = async () => {
     if (!description || !amount) return;
     setSaving(true);
-    try { await run(() => db.createExpense({ description, amount: +amount, category, date })); onClose(); }
+    try { await run(() => db.createExpense({ description, amount: +amount, category, date }, accountId)); onClose(); }
     finally { setSaving(false); }
   };
   return <Modal title="Ajouter une dépense" onClose={onClose}>
@@ -712,7 +793,7 @@ function ExpenseModal({ onClose, run }) {
 }
 
 // ---------- Inventory ----------
-function Inventory({ data, run, busy }) {
+function Inventory({ data, run, busy, accountId }) {
   const [modal, setModal] = useState(null);
   const [checkDate, setCheckDate] = useState(todayISO());
   const availability = (item) => {
@@ -720,7 +801,7 @@ function Inventory({ data, run, busy }) {
       .reduce((s, r) => s + (r.items.find((it) => it.itemId === item.id)?.qty || 0), 0);
     return item.total - rented;
   };
-  const save = (item) => run(() => db.saveInventoryItem(item)).then(() => setModal(null));
+  const save = (item) => run(() => db.saveInventoryItem(item, accountId)).then(() => setModal(null));
   const remove = (id) => { if (confirm("Supprimer cet article ?")) run(() => db.deleteInventoryItem(id)); };
 
   return <div>
@@ -783,7 +864,7 @@ function ItemModal({ item, onClose, onSave }) {
 }
 
 // ---------- Reservations ----------
-function Reservations({ data, run, busy }) {
+function Reservations({ data, run, busy, accountId }) {
   const [modal, setModal] = useState(false);
   const [openId, setOpenId] = useState(null);
   const [editRes, setEditRes] = useState(null);
@@ -820,7 +901,7 @@ function Reservations({ data, run, busy }) {
       })}
       {list.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune commande dans ce filtre.</div></Card>}
     </div>
-    {modal && <NewReservationModal data={data} run={run} onClose={() => setModal(false)} />}
+    {modal && <NewReservationModal data={data} run={run} onClose={() => setModal(false)} accountId={accountId} />}
     {openId && <ReservationDetail data={data} run={run} id={openId} onClose={() => setOpenId(null)} />}
     {editRes && <EditReservationModal data={data} run={run} reservation={editRes} onClose={() => setEditRes(null)} />}
   </div>;
@@ -886,7 +967,7 @@ function EditReservationModal({ data, run, reservation, onClose }) {
   </Modal>;
 }
 
-function NewReservationModal({ data, run, onClose }) {
+function NewReservationModal({ data, run, onClose, accountId }) {
   const [clientMode, setClientMode] = useState("existing");
   const [clientId, setClientId] = useState(data.clients[0]?.id || "");
   const [newClient, setNewClient] = useState({ name: "", phone: "" });
@@ -912,12 +993,12 @@ function NewReservationModal({ data, run, onClose }) {
     setSaving(true);
     try {
       let cId = clientId;
-      if (clientMode === "new") { if (!newClient.name) { setSaving(false); return; } cId = await db.createClient(newClient.name, newClient.phone); }
+      if (clientMode === "new") { if (!newClient.name) { setSaving(false); return; } cId = await db.createClient(newClient.name, newClient.phone, accountId); }
       let dId = driverId || null;
-      if (driverId === "__new_freelance") { if (!freelance.name) { setSaving(false); return; } dId = await db.createDriver(freelance.name, freelance.phone, "externe", +freelance.fee || 0); }
+      if (driverId === "__new_freelance") { if (!freelance.name) { setSaving(false); return; } dId = await db.createDriver(freelance.name, freelance.phone, "externe", +freelance.fee || 0, accountId); }
       const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => { const inv = data.inventory.find((i) => i.id === itemId); return { itemId, qty, unit: inv.unit }; });
       if (items.length === 0 || !start || !end) { setSaving(false); return; }
-      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode }));
+      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode, accountId }));
       onClose();
     } finally { setSaving(false); }
   };
@@ -1066,7 +1147,7 @@ function Planning({ data }) {
 }
 
 // ---------- Clients ----------
-function Clients({ data, run }) {
+function Clients({ data, run, accountId }) {
   const [modal, setModal] = useState(null);
   const historyFor = (clientId) => data.reservations.filter((r) => r.clientId === clientId);
   const remove = (id) => {
@@ -1078,6 +1159,7 @@ function Clients({ data, run }) {
   };
   return <div>
     <PageBanner icon={Users} title="Clients" subtitle="Historique et vigilance" />
+    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un client</Btn>}>&nbsp;</SectionTitle>
     <div style={{ display: "grid", gap: 10 }}>
       {data.clients.map((c) => {
         const hist = historyFor(c.id);
@@ -1098,34 +1180,38 @@ function Clients({ data, run }) {
           </div>
         </Card>;
       })}
+      {data.clients.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun client pour l'instant.</div></Card>}
     </div>
-    {modal && <ClientEditModal client={modal} onClose={() => setModal(null)} run={run} />}
+    {modal !== null && <ClientEditModal client={modal} onClose={() => setModal(null)} run={run} accountId={accountId} />}
   </div>;
 }
 
-function ClientEditModal({ client, onClose, run }) {
-  const [name, setName] = useState(client.name);
-  const [phone, setPhone] = useState(client.phone);
+function ClientEditModal({ client, onClose, run, accountId }) {
+  const [name, setName] = useState(client.name || "");
+  const [phone, setPhone] = useState(client.phone || "");
   const [saving, setSaving] = useState(false);
   const save = async () => {
     if (!name) return;
     setSaving(true);
-    try { await run(() => db.updateClient(client.id, name, phone)); onClose(); }
-    finally { setSaving(false); }
+    try {
+      if (client.id) await run(() => db.updateClient(client.id, name, phone));
+      else await run(() => db.createClient(name, phone, accountId));
+      onClose();
+    } finally { setSaving(false); }
   };
-  return <Modal title="Modifier le client" onClose={onClose}>
-    <Field label="Nom"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+  return <Modal title={client.id ? "Modifier le client" : "Nouveau client"} onClose={onClose}>
+    <Field label="Nom"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
     <Field label="Téléphone"><input style={inputStyle} value={phone} onChange={(e) => setPhone(e.target.value)} /></Field>
     <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
   </Modal>;
 }
 
 // ---------- Drivers ----------
-function Drivers({ data, run }) {
+function Drivers({ data, run, accountId }) {
   const [modal, setModal] = useState(false);
   const [editDriver, setEditDriver] = useState(null);
   const [f, setF] = useState({ name: "", phone: "", type: "interne", fee: 0 });
-  const add = () => { if (!f.name) return; run(() => db.createDriver(f.name, f.phone, f.type, +f.fee)); setF({ name: "", phone: "", type: "interne", fee: 0 }); setModal(false); };
+  const add = () => { if (!f.name) return; run(() => db.createDriver(f.name, f.phone, f.type, +f.fee, accountId)); setF({ name: "", phone: "", type: "interne", fee: 0 }); setModal(false); };
   const remove = (id) => { if (confirm("Supprimer ce livreur ? Les réservations liées seront désassignées.")) run(() => db.deleteDriver(id)); };
   return <div>
     <PageBanner icon={Truck} title="Livreurs" subtitle="Internes et freelances" />
@@ -1173,7 +1259,7 @@ function DriverEditModal({ driver, onClose, run }) {
 }
 
 // ---------- Settings (personnalisation devis) ----------
-function SettingsPage({ data, run, busy }) {
+function SettingsPage({ data, run, busy, accountId }) {
   const [f, setF] = useState({ ...data.settings });
   const [saved, setSaved] = useState(false);
 
@@ -1187,7 +1273,7 @@ function SettingsPage({ data, run, busy }) {
 
   const save = () => {
     setSaved(false);
-    run(() => db.saveSettings(f)).then(() => setSaved(true));
+    run(() => db.saveSettings(f, accountId)).then(() => setSaved(true));
   };
 
   return <div>
@@ -1218,7 +1304,7 @@ function SettingsPage({ data, run, busy }) {
 }
 
 // ---------- Utilisateurs (accès personnalisables) ----------
-function UsersPage({ data, run, currentUser }) {
+function UsersPage({ data, run, currentUser, accountId }) {
   const [modal, setModal] = useState(null);
   const remove = (id) => {
     if (id === currentUser.id) { alert("Tu ne peux pas supprimer ton propre compte."); return; }
@@ -1243,13 +1329,13 @@ function UsersPage({ data, run, currentUser }) {
           </div>
         </div>
       </Card>)}
-      {data.users.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun utilisateur (la table 'users' a-t-elle bien été créée dans Supabase ?)</div></Card>}
+      {data.users.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun utilisateur.</div></Card>}
     </div>
-    {modal !== null && <UserModal user={modal} onClose={() => setModal(null)} run={run} />}
+    {modal !== null && <UserModal user={modal} onClose={() => setModal(null)} run={run} accountId={accountId} />}
   </div>;
 }
 
-function UserModal({ user, onClose, run }) {
+function UserModal({ user, onClose, run, accountId }) {
   const defaultPerms = { dashboard: false, bilan: false, revenues: false, expenses: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
   const [f, setF] = useState({ name: "", username: "", password: "", permissions: defaultPerms, ...user, permissions: { ...defaultPerms, ...(user.permissions || {}) } });
   const [saving, setSaving] = useState(false);
@@ -1260,7 +1346,7 @@ function UserModal({ user, onClose, run }) {
     if (!f.id && !f.password) { alert("Un mot de passe est requis pour un nouvel utilisateur."); return; }
     setSaving(true);
     try {
-      await run(() => (f.id ? db.updateUser(f) : db.createUser(f)));
+      await run(() => (f.id ? db.updateUser(f) : db.createUser(f, accountId)));
       onClose();
     } finally { setSaving(false); }
   };
