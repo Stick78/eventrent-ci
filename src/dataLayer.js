@@ -37,7 +37,7 @@ const mapSettings = (r) => ({
   footerText: r.footer_text || "",
   logo: r.logo_base64 || null,
 });
-const mapUser = (r) => ({ id: r.id, name: r.name, username: r.username, permissions: r.permissions || {}, accountId: r.account_id });
+const mapUser = (r) => ({ id: r.id, name: r.name, username: r.username, permissions: r.permissions || {}, accountId: r.account_id, isPlatformAdmin: !!r.is_platform_admin });
 
 const RESERVATION_SELECT = `
   id, client_id, driver_id, start_date, end_date, address, zone, seasonal, status,
@@ -73,7 +73,7 @@ export async function signUpAccount({ companyName, adminName, username, password
 
 // ---------- users (auth + gestion des accès) ----------
 export async function fetchUserById(id) {
-  const { data, error } = await supabase.from("users").select("id, name, username, permissions, account_id").eq("id", id).maybeSingle();
+  const { data, error } = await supabase.from("users").select("id, name, username, permissions, account_id, is_platform_admin").eq("id", id).maybeSingle();
   if (error || !data) return null;
   return mapUser(data);
 }
@@ -81,12 +81,36 @@ export async function fetchUserById(id) {
 export async function verifyLogin(username, password) {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, username, permissions, account_id")
+    .select("id, name, username, permissions, account_id, is_platform_admin")
     .eq("username", username)
     .eq("password", password)
     .maybeSingle();
   if (error || !data) return null;
+  supabase.from("users").update({ last_login_at: new Date().toISOString() }).eq("id", data.id).then(() => {});
   return mapUser(data);
+}
+
+// ---------- suivi plateforme (visible uniquement par l'administrateur de la plateforme) ----------
+export async function fetchPlatformOverview() {
+  const { data: accounts, error: e1 } = await supabase.from("accounts").select("id, name, created_at").order("created_at", { ascending: false });
+  if (e1) throw e1;
+  const { data: users, error: e2 } = await supabase.from("users").select("account_id, name, username, last_login_at");
+  if (e2) throw e2;
+  return accounts.map((a) => {
+    const accUsers = users.filter((u) => u.account_id === a.id);
+    const lastLogin = accUsers.reduce((max, u) => (u.last_login_at && (!max || u.last_login_at > max) ? u.last_login_at : max), null);
+    const daysSince = Math.floor((Date.now() - new Date(a.created_at).getTime()) / 86400000);
+    return {
+      id: a.id,
+      name: a.name,
+      createdAt: a.created_at,
+      daysSince,
+      daysLeft: 30 - daysSince,
+      userCount: accUsers.length,
+      lastLogin,
+      users: accUsers.map((u) => ({ name: u.name, username: u.username })),
+    };
+  });
 }
 
 export async function fetchUsers(accountId) {
