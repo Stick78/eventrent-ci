@@ -230,7 +230,7 @@ export default function App() {
   }, [currentUser, handleLogout]);
 
   useEffect(() => {
-    if (currentUser && !currentUser.permissions?.[tab]) {
+    if (currentUser && tab !== "platform" && !currentUser.permissions?.[tab]) {
       const firstAllowed = MODULES.find((m) => currentUser.permissions?.[m.id]);
       if (firstAllowed) setTab(firstAllowed.id);
     }
@@ -254,6 +254,7 @@ export default function App() {
   }
 
   const nav = MODULES.filter((m) => currentUser.permissions?.[m.id]);
+  if (currentUser.isPlatformAdmin) nav.push({ id: "platform", label: "Comptes clients", icon: Building2 });
   const hasAccess = (id) => !!currentUser.permissions?.[id];
   const isAdmin = !!currentUser.permissions?.users;
 
@@ -323,6 +324,7 @@ export default function App() {
         {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} accountId={accountId} />}
         {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} accountId={accountId} />}
         {tab === "users" && hasAccess("users") && <UsersPage data={data} run={run} currentUser={currentUser} accountId={accountId} />}
+        {tab === "platform" && currentUser.isPlatformAdmin && <PlatformOverview />}
         {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
       </div>
     </div>
@@ -1303,6 +1305,47 @@ function SettingsPage({ data, run, busy, accountId }) {
         <Btn disabled={busy} onClick={save}>{busy ? "Enregistrement..." : "Enregistrer"}</Btn>
         {saved && <span style={{ fontSize: 12.5, color: "#1F6F4B", fontWeight: 700 }}>✓ Enregistré</span>}
       </div>
+    </Card>
+  </div>;
+}
+
+// ---------- Suivi plateforme (comptes clients, réservé à l'admin plateforme) ----------
+function PlatformOverview() {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    db.fetchPlatformOverview()
+      .then(setRows)
+      .catch((e) => { console.error(e); setError(e.message || "Erreur de chargement"); });
+  }, []);
+
+  if (error) return <div style={{ color: "#B3261E", fontSize: 13.5 }}>⚠ {error}</div>;
+  if (!rows) return <div style={{ display: "flex", alignItems: "center", gap: 8, color: TEXT_MUTED }}><Loader2 className="spin" size={18} /> Chargement...</div>;
+
+  return <div>
+    <PageBanner icon={Building2} title="Comptes clients" subtitle="Suivi des essais et de l'activité par entreprise" />
+    <Card style={{ padding: 0 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
+          {["Entreprise", "Créé le", "Statut essai", "Utilisateurs", "Dernière connexion"].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
+        </tr></thead>
+        <tbody>{rows.map((r) => {
+          const trialOver = r.daysLeft <= 0;
+          return <tr key={r.id} style={{ borderTop: "1px solid #F0EEE7" }}>
+            <td style={{ padding: "10px 12px", fontWeight: 700 }}>{r.name}</td>
+            <td style={{ padding: "10px 12px", color: "#5B564C" }}>{fmtDate(r.createdAt.slice(0, 10))}</td>
+            <td style={{ padding: "10px 12px" }}>
+              <Badge text={trialOver ? "Essai terminé" : `${r.daysLeft} j restants`} bg={trialOver ? "#FBEAE8" : r.daysLeft <= 7 ? "#FBF0DA" : "#DFF0E8"} fg={trialOver ? "#B3261E" : r.daysLeft <= 7 ? "#9A6A00" : "#1F6F4B"} />
+            </td>
+            <td style={{ padding: "10px 12px" }}>
+              {r.userCount} {r.userCount > 0 && <span style={{ color: TEXT_MUTED, fontSize: 11.5 }}>({r.users.map((u) => u.username).join(", ")})</span>}
+            </td>
+            <td style={{ padding: "10px 12px", color: "#5B564C" }}>{r.lastLogin ? fmtDate(r.lastLogin.slice(0, 10)) : "Jamais connecté"}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+      {rows.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13 }}>Aucun compte pour l'instant.</div>}
     </Card>
   </div>;
 }
