@@ -1,4 +1,4 @@
-import { supabase } from "./supabaseClient";
+import { supabase, supabaseSignup } from "./supabaseClient";
 
 // ---------- mapping helpers (snake_case DB -> camelCase UI) ----------
 const mapInventory = (r) => ({
@@ -99,17 +99,10 @@ export async function fetchAccount(accountId) {
 }
 
 export async function signUpCompany({ companyName, adminName, email, password }) {
-  const { data: authData, error: e1 } = await supabase.auth.signUp({ email, password });
+  const { data: authData, error: e1 } = await supabaseSignup.auth.signUp({ email, password });
   if (e1) throw e1;
   const userId = authData.user?.id;
   if (!userId) throw new Error("Inscription incomplète, réessaie.");
-
-  const needsEmailConfirmation = !authData.session;
-  if (authData.session) {
-    // Déconnexion immédiate : évite que l'app tente de charger le profil
-    // avant qu'il ne soit réellement créé (quelques instants plus bas).
-    await supabase.auth.signOut();
-  }
 
   const { data: account, error: e2 } = await supabase.from("accounts")
     .insert({ name: companyName, company_name: companyName })
@@ -125,7 +118,7 @@ export async function signUpCompany({ companyName, adminName, email, password })
   });
   if (e3) throw e3;
 
-  return { needsEmailConfirmation };
+  return { needsEmailConfirmation: !authData.session };
 }
 
 // ============================================================
