@@ -235,9 +235,7 @@ export default function App() {
   }
 
   return <TenantApp profile={profile} account={account} daysLeft={daysLeft} onLogout={handleLogout} />;
-}
-
-function FullScreenLoader() {
+}function FullScreenLoader() {
   return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, color: TEXT_MUTED, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
     <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement...
   </div>;
@@ -347,6 +345,8 @@ function SignupScreen({ onBackToLogin }) {
 }
 
 function TrialExpiredScreen({ account, onLogout }) {
+  const [contactPhone, setContactPhone] = useState(null);
+  useEffect(() => { db.fetchPlatformSettings().then((s) => setContactPhone(s.contactPhone)); }, []);
   return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
     <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 380, textAlign: "center" }}>
       <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
@@ -356,7 +356,7 @@ function TrialExpiredScreen({ account, onLogout }) {
       <div style={{ fontSize: 13.5, color: TEXT_MUTED, marginBottom: 20 }}>
         Pour continuer à utiliser EventRent CI, contacte-nous pour activer ton abonnement.
       </div>
-      <div style={{ fontSize: 13, marginBottom: 20 }}>📞 Contact : à renseigner</div>
+      {contactPhone && <div style={{ fontSize: 13, marginBottom: 20 }}>📞 Contact : {contactPhone}</div>}
       <Btn onClick={onLogout} variant="ghost">Se déconnecter</Btn>
     </div>
   </div>;
@@ -1372,6 +1372,10 @@ function TeamMemberModal({ member, onClose, run }) {
 // ============================================================
 function PlatformAdminApp({ profile, onLogout }) {
   const [accounts, setAccounts] = useState(null);
+  const [platformSettings, setPlatformSettings] = useState(null);
+  const [contactPhone, setContactPhone] = useState("");
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -1380,6 +1384,19 @@ function PlatformAdminApp({ profile, onLogout }) {
     catch (e) { console.error(e); setError(e.message); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    db.fetchPlatformSettings().then((s) => { setPlatformSettings(s); setContactPhone(s.contactPhone); });
+  }, []);
+
+  const saveContactPhone = async () => {
+    setSavingSettings(true); setSettingsSaved(false);
+    try {
+      await db.savePlatformSettings({ id: platformSettings?.id, contactPhone });
+      setPlatformSettings((s) => ({ ...s, contactPhone }));
+      setSettingsSaved(true);
+    } catch (e) { console.error(e); setError(e.message); }
+    finally { setSavingSettings(false); }
+  };
 
   const run = async (fn) => {
     setBusy(true);
@@ -1421,6 +1438,14 @@ function PlatformAdminApp({ profile, onLogout }) {
     </div>
     <div style={{ padding: 24, maxWidth: 1000, margin: "0 auto" }}>
       {error && <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>⚠ {error}</div>}
+      <Card style={{ marginBottom: 20, maxWidth: 400 }}>
+        <div style={{ fontWeight: 800, marginBottom: 10 }}>Contact affiché aux essais expirés</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input style={inputStyle} value={contactPhone} onChange={(e) => { setContactPhone(e.target.value); setSettingsSaved(false); }} placeholder="Ex: +225 07 00 00 00 00" />
+          <Btn small disabled={savingSettings} onClick={saveContactPhone}>{savingSettings ? "..." : "Enregistrer"}</Btn>
+        </div>
+        {settingsSaved && <div style={{ fontSize: 12, color: "#1F6F4B", fontWeight: 700, marginTop: 6 }}>✓ Enregistré</div>}
+      </Card>
       <SectionTitle>Comptes clients ({accounts?.length || 0})</SectionTitle>
       {!accounts ? <FullScreenLoader /> : <div style={{ display: "grid", gap: 10 }}>
         {accounts.map((a) => <Card key={a.id}>
