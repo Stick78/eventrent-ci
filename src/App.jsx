@@ -1372,7 +1372,9 @@ function TeamMemberModal({ member, onClose, run }) {
 // Application "super-admin plateforme"
 // ============================================================
 function PlatformAdminApp({ profile, onLogout }) {
+  const [view, setView] = useState("accounts");
   const [accounts, setAccounts] = useState(null);
+  const [users, setUsers] = useState(null);
   const [platformSettings, setPlatformSettings] = useState(null);
   const [contactPhone, setContactPhone] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
@@ -1388,6 +1390,11 @@ function PlatformAdminApp({ profile, onLogout }) {
   useEffect(() => {
     db.fetchPlatformSettings().then((s) => { setPlatformSettings(s); setContactPhone(s.contactPhone); });
   }, []);
+  useEffect(() => {
+    if (view === "users" && users === null) {
+      db.fetchAllUsers().then(setUsers).catch((e) => { console.error(e); setError(e.message); });
+    }
+  }, [view, users]);
 
   const saveContactPhone = async () => {
     setSavingSettings(true); setSettingsSaved(false);
@@ -1453,27 +1460,55 @@ function PlatformAdminApp({ profile, onLogout }) {
         </div>
         {settingsSaved && <div style={{ fontSize: 12, color: "#1F6F4B", fontWeight: 700, marginTop: 6 }}>✓ Enregistré</div>}
       </Card>
-      <SectionTitle>Comptes clients ({accounts?.length || 0})</SectionTitle>
-      {!accounts ? <FullScreenLoader /> : <div style={{ display: "grid", gap: 10 }}>
-        {accounts.map((a) => <Card key={a.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-            <div>
-              <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>{a.companyName} {statusBadge(a.status)}</div>
-              <div style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 3 }}>
-                Inscrit le {fmtDate(a.createdAt)} · Plan {a.plan}
-                {a.status === "trial" && ` · ${daysLeft(a.trialEnd)} jour(s) d'essai restant(s)`}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <Btn small variant={view === "accounts" ? "primary" : "ghost"} onClick={() => setView("accounts")}>Comptes clients</Btn>
+        <Btn small variant={view === "users" ? "primary" : "ghost"} onClick={() => setView("users")}>Utilisateurs</Btn>
+      </div>
+
+      {view === "accounts" && <>
+        <SectionTitle>Comptes clients ({accounts?.length || 0})</SectionTitle>
+        {!accounts ? <FullScreenLoader /> : <div style={{ display: "grid", gap: 10 }}>
+          {accounts.map((a) => <Card key={a.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+              <div>
+                <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>{a.companyName} {statusBadge(a.status)}</div>
+                <div style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 3 }}>
+                  Inscrit le {fmtDate(a.createdAt)} · Plan {a.plan}
+                  {a.status === "trial" && ` · ${daysLeft(a.trialEnd)} jour(s) d'essai restant(s)`}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {a.status !== "active" && <Btn small disabled={busy} onClick={() => activate(a.id)}>Activer</Btn>}
+                {a.status === "trial" && <Btn small variant="ghost" disabled={busy} onClick={() => extendTrial(a.id)}>Prolonger l'essai</Btn>}
+                {a.status !== "cancelled" && <Btn small variant="danger" disabled={busy} onClick={() => cancel(a.id)}>Résilier</Btn>}
+                {a.id !== "11111111-1111-1111-1111-111111111111" && <Btn small variant="danger" disabled={busy} onClick={() => remove(a)}>Supprimer</Btn>}
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {a.status !== "active" && <Btn small disabled={busy} onClick={() => activate(a.id)}>Activer</Btn>}
-              {a.status === "trial" && <Btn small variant="ghost" disabled={busy} onClick={() => extendTrial(a.id)}>Prolonger l'essai</Btn>}
-              {a.status !== "cancelled" && <Btn small variant="danger" disabled={busy} onClick={() => cancel(a.id)}>Résilier</Btn>}
-              {a.id !== "11111111-1111-1111-1111-111111111111" && <Btn small variant="danger" disabled={busy} onClick={() => remove(a)}>Supprimer</Btn>}
-            </div>
-          </div>
-        </Card>)}
-        {accounts.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun compte client pour l'instant.</div></Card>}
-      </div>}
+          </Card>)}
+          {accounts.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun compte client pour l'instant.</div></Card>}
+        </div>}
+      </>}
+
+      {view === "users" && <>
+        <SectionTitle>Utilisateurs ({users?.length || 0})</SectionTitle>
+        {!users ? <FullScreenLoader /> : <Card style={{ padding: 0 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ textAlign: "left", background: "#FAF9F5" }}>
+              {["Nom", "Email", "Entreprise", "Statut", "Rôle", "Inscrit le"].map((h) => <th key={h} style={{ padding: "10px 12px", fontSize: 11, color: TEXT_MUTED, fontWeight: 700 }}>{h}</th>)}
+            </tr></thead>
+            <tbody>{users.map((u) => <tr key={u.id} style={{ borderTop: "1px solid #F0EEE7" }}>
+              <td style={{ padding: "10px 12px", fontWeight: 700 }}>{u.name}</td>
+              <td style={{ padding: "10px 12px" }}>{u.email}</td>
+              <td style={{ padding: "10px 12px" }}>{u.companyName}</td>
+              <td style={{ padding: "10px 12px" }}>{u.isPlatformAdmin ? <Badge text="—" bg="#EAE8E2" fg="#5B564C" /> : statusBadge(u.accountStatus)}</td>
+              <td style={{ padding: "10px 12px" }}>{u.isPlatformAdmin ? <Badge text="Super-admin" bg="#DCEAFB" fg="#1D5FA8" /> : <Badge text={u.permissions?.users ? "Admin entreprise" : "Membre"} bg="#F1EFE8" fg="#5B564C" />}</td>
+              <td style={{ padding: "10px 12px", color: TEXT_MUTED }}>{fmtDate(u.createdAt)}</td>
+            </tr>)}</tbody>
+          </table>
+          {users.length === 0 && <div style={{ padding: 16, color: TEXT_MUTED, fontSize: 13.5 }}>Aucun utilisateur pour l'instant.</div>}
+        </Card>}
+      </>}
     </div>
   </div>;
 }
