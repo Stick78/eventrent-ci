@@ -12,3 +12,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 export const supabaseSignup = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
+
+// Crée une connexion temporaire authentifiée avec le jeton d'un utilisateur précis.
+// Utile juste après une inscription, pour que les toutes premières écritures
+// (création de l'entreprise + du profil) respectent les règles de sécurité (RLS).
+export function createAuthedClient(accessToken) {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+}
