@@ -105,22 +105,14 @@ export async function signUpCompany({ companyName, adminName, email, password })
   if (!userId) throw new Error("Inscription incomplète, réessaie.");
   if (!authData.session) throw new Error("Inscription incomplète (session manquante), réessaie.");
 
-  // On reste sur la connexion "supabaseSignup" : elle vient de connecter ce
-  // nouvel utilisateur et garde cette information en mémoire correctement
-  // pour ces deux écritures, contrairement à une connexion recréée à la volée.
-  const { data: account, error: e2 } = await supabaseSignup.from("accounts")
-    .insert({ name: companyName, company_name: companyName })
-    .select().single();
-  if (e2) throw e2;
-
-  const fullPermissions = {
-    dashboard: true, bilan: true, revenues: true, expenses: true, inventory: true,
-    reservations: true, planning: true, clients: true, drivers: true, settings: true, users: true,
-  };
-  const { error: e3 } = await supabaseSignup.from("profiles").insert({
-    id: userId, account_id: account.id, name: adminName, permissions: fullPermissions, is_platform_admin: false,
+  // On délègue la création de l'entreprise + du profil à une fonction
+  // sécurisée côté base de données : plus fiable qu'une écriture directe
+  // depuis le navigateur juste après l'inscription.
+  const { error: e2 } = await supabaseSignup.rpc("create_company_account", {
+    p_company_name: companyName,
+    p_admin_name: adminName,
   });
-  if (e3) throw e3;
+  if (e2) throw e2;
 
   return { needsEmailConfirmation: false };
 }
