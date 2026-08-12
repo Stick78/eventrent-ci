@@ -387,3 +387,25 @@ export async function updateAccountStatus(accountId, { status, trialEnd }) {
   const { error } = await supabase.from("accounts").update(row).eq("id", accountId);
   if (error) throw error;
 }
+
+export async function fetchPlatformSettings() {
+  try {
+    const { data, error } = await supabase.from("platform_settings").select("*").limit(1).maybeSingle();
+    if (error || !data) return { id: null, contactPhone: "" };
+    return { id: data.id, contactPhone: data.contact_phone || "" };
+  } catch (e) {
+    console.error("Impossible de charger les paramètres plateforme :", e);
+    return { id: null, contactPhone: "" };
+  }
+}
+
+export async function savePlatformSettings(settings) {
+  const row = { contact_phone: settings.contactPhone, updated_at: new Date().toISOString() };
+  if (settings.id) {
+    const { error } = await supabase.from("platform_settings").update(row).eq("id", settings.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from("platform_settings").insert(row);
+    if (error) throw error;
+  }
+}
