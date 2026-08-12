@@ -92,6 +92,35 @@ export async function fetchProfile(userId) {
   };
 }
 
+export async function fetchAccount(accountId) {
+  const { data, error } = await supabase.from("accounts").select("*").eq("id", accountId).single();
+  if (error) throw error;
+  return mapAccount(data);
+}
+
+export async function signUpCompany({ companyName, adminName, email, password }) {
+  const { data: authData, error: e1 } = await supabase.auth.signUp({ email, password });
+  if (e1) throw e1;
+  const userId = authData.user?.id;
+  if (!userId) throw new Error("Inscription incomplète, réessaie.");
+
+  const { data: account, error: e2 } = await supabase.from("accounts")
+    .insert({ name: companyName, company_name: companyName })
+    .select().single();
+  if (e2) throw e2;
+
+  const fullPermissions = {
+    dashboard: true, bilan: true, revenues: true, expenses: true, inventory: true,
+    reservations: true, planning: true, clients: true, drivers: true, settings: true, users: true,
+  };
+  const { error: e3 } = await supabase.from("profiles").insert({
+    id: userId, account_id: account.id, name: adminName, permissions: fullPermissions, is_platform_admin: false,
+  });
+  if (e3) throw e3;
+
+  return { needsEmailConfirmation: !authData.session };
+}
+
 // ============================================================
 // DONNÉES MÉTIER (toutes filtrées par account_id)
 // ============================================================
