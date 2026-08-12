@@ -1421,6 +1421,12 @@ function PlatformAdminApp({ profile, onLogout }) {
     run(() => db.updateAccountStatus(accountId, { status: "trial", trialEnd: d.toISOString().slice(0, 10) }));
   };
   const cancel = (accountId) => { if (confirm("Résilier ce compte ?")) run(() => db.updateAccountStatus(accountId, { status: "cancelled" })); };
+  const remove = (account) => {
+    const typed = prompt(`Suppression définitive et irréversible.\nToutes les données de "${account.companyName}" seront perdues.\n\nPour confirmer, retape exactement le nom de l'entreprise :`);
+    if (typed === null) return;
+    if (typed.trim() !== account.companyName) { alert("Le nom saisi ne correspond pas. Suppression annulée."); return; }
+    run(() => db.deleteAccount(account.id));
+  };
 
   return <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK }}>
     <style>{`* { box-sizing: border-box; } button { font-family: inherit; cursor: pointer; }`}</style>
@@ -1461,6 +1467,7 @@ function PlatformAdminApp({ profile, onLogout }) {
               {a.status !== "active" && <Btn small disabled={busy} onClick={() => activate(a.id)}>Activer</Btn>}
               {a.status === "trial" && <Btn small variant="ghost" disabled={busy} onClick={() => extendTrial(a.id)}>Prolonger l'essai</Btn>}
               {a.status !== "cancelled" && <Btn small variant="danger" disabled={busy} onClick={() => cancel(a.id)}>Résilier</Btn>}
+              {a.id !== "11111111-1111-1111-1111-111111111111" && <Btn small variant="danger" disabled={busy} onClick={() => remove(a)}>Supprimer</Btn>}
             </div>
           </div>
         </Card>)}
