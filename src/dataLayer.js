@@ -388,6 +388,21 @@ export async function updateAccountStatus(accountId, { status, trialEnd }) {
   if (error) throw error;
 }
 
+export async function deleteAccount(accountId) {
+  // Supprime toutes les données du compte, dans l'ordre (enfants avant parents)
+  const tables = [
+    "reservation_items", "payments", "reservations",
+    "pack_items", "packs", "clients", "drivers", "inventory",
+    "settings", "additional_revenues", "expenses", "profiles",
+  ];
+  for (const table of tables) {
+    const { error } = await supabase.from(table).delete().eq("account_id", accountId);
+    if (error) throw error;
+  }
+  const { error: eAcc } = await supabase.from("accounts").delete().eq("id", accountId);
+  if (eAcc) throw eAcc;
+}
+
 export async function fetchPlatformSettings() {
   try {
     const { data, error } = await supabase.from("platform_settings").select("*").limit(1).maybeSingle();
