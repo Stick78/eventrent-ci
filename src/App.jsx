@@ -333,10 +333,10 @@ function SignupScreen({ onBackToLogin }) {
     <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360 }}>
       <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Créer mon entreprise</div>
       <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>14 jours d'essai gratuit, sans engagement</div>
-      <Field label="Nom de l'entreprise"><input style={inputStyle} value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></Field>
-      <Field label="Ton nom"><input style={inputStyle} value={adminName} onChange={(e) => setAdminName(e.target.value)} /></Field>
-      <Field label="Email"><input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-      <Field label="Mot de passe (6 caractères min.)"><input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+      <Field label="Nom de l'entreprise"><input style={inputStyle} value={companyName} onChange={(e) => setCompanyName(e.target.value)} autoComplete="off" name="signup-company" /></Field>
+      <Field label="Ton nom"><input style={inputStyle} value={adminName} onChange={(e) => setAdminName(e.target.value)} autoComplete="off" name="signup-admin-name" /></Field>
+      <Field label="Email"><input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" name="signup-email" /></Field>
+      <Field label="Mot de passe (6 caractères min.)"><input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" name="signup-password" /></Field>
       {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
       <Btn disabled={loading} onClick={submit}>{loading ? "Création..." : "Démarrer l'essai gratuit"}</Btn>
       <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
