@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext } from "react";
 import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank
+  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, ShieldCheck
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -31,7 +31,7 @@ const MODULES = [
   { id: "clients", label: "Clients", icon: Users },
   { id: "drivers", label: "Livreurs", icon: Truck },
   { id: "settings", label: "Paramètres", icon: SettingsIcon },
-  { id: "users", label: "Utilisateurs", icon: UserCog },
+  { id: "users", label: "Équipe", icon: UserCog },
 ];
 const NAVY = "#0F1B3D";
 const BG = "#F5F6FA";
@@ -44,12 +44,16 @@ const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("
 const reservationTotal = (r) => r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
 const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
+// Contexte : rend l'accountId courant accessible à tous les composants sans prop drilling
+const AccountContext = createContext(null);
+const useAccountId = () => useContext(AccountContext);
+
 // ---------- Génération du devis PDF (personnalisable) ----------
 function generateQuotePDF(r, data) {
   if (!window.jspdf) { alert("La librairie PDF n'a pas pu se charger. Vérifie ta connexion et réessaie."); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  const settings = data.settings || { companyName: "EventRent CI", phone: "", footerText: "", logo: null };
+  const settings = data.settings || { companyName: "Mon entreprise", phone: "", footerText: "", logo: null };
   const zone = ZONES.find((z) => z.id === r.zone);
   const driver = data.drivers.find((d) => d.id === r.driverId);
   const subtotal = r.items.reduce((s, it) => s + it.qty * it.unit, 0);
@@ -79,7 +83,7 @@ function generateQuotePDF(r, data) {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(18);
   doc.setFont(undefined, "bold");
-  doc.text(settings.companyName || "EventRent CI", textX, 17);
+  doc.text(settings.companyName || "Mon entreprise", textX, 17);
   doc.setFontSize(8);
   doc.setFont(undefined, "normal");
   doc.setTextColor(200, 210, 205);
@@ -157,172 +161,94 @@ function generateQuotePDF(r, data) {
   doc.setFontSize(8);
   doc.setTextColor(140, 140, 140);
   const footer = settings.footerText || "Devis valable 15 jours à compter de la date d'émission.";
-  doc.text(`${settings.companyName || "EventRent CI"} — ${footer}`, 14, 285);
+  doc.text(`${settings.companyName || "Mon entreprise"} — ${footer}`, 14, 285);
   doc.text("Ce document ne constitue pas une facture.", 14, 290);
 
   doc.save(`${docNumber}-${(r.clientName || "client").replace(/\s+/g, "_")}.pdf`);
 }
 
-// ---------- App ----------
+// ============================================================
+// App racine : gère la session Supabase Auth
+// ============================================================
 export default function App() {
-  const [tab, setTab] = useState("reservations");
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [session, setSession] = useState(undefined); // undefined = pas encore vérifié, null = pas connecté
+  const [profile, setProfile] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const d = await db.fetchAll();
-      setData(d);
-      setError(null);
-      const savedId = localStorage.getItem("eventrent_user_id");
-      if (savedId) {
-        const found = (d.users || []).find((u) => u.id === savedId);
-        if (found) setCurrentUser(found);
-        else localStorage.removeItem("eventrent_user_id");
-      }
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "Erreur de connexion à la base");
-    }
-  }, []);
-
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const run = async (fn) => {
-    setBusy(true);
-    try { await fn(); await refresh(); }
-    catch (e) { console.error(e); setError(e.message || "Une erreur est survenue"); }
-    finally { setBusy(false); }
-  };
-
-  const handleLogin = (user) => {
-    localStorage.setItem("eventrent_user_id", user.id);
-    setCurrentUser(user);
-  };
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem("eventrent_user_id");
-    setCurrentUser(null);
+  useEffect(() => {
+    let sub;
+    (async () => {
+      const s = await db.getSession();
+      setSession(s || null);
+      sub = db.onAuthStateChange((newSession) => setSession(newSession));
+    })();
+    return () => { if (sub) sub.unsubscribe(); };
   }, []);
 
   useEffect(() => {
-    if (!currentUser) return;
-    let timer;
-    const reset = () => { clearTimeout(timer); timer = setTimeout(handleLogout, 20 * 60 * 1000); };
-    const events = ["mousemove", "keydown", "click", "touchstart"];
-    events.forEach((ev) => window.addEventListener(ev, reset));
-    reset();
-    return () => { clearTimeout(timer); events.forEach((ev) => window.removeEventListener(ev, reset)); };
-  }, [currentUser, handleLogout]);
+    if (session === undefined) return;
+    if (!session) { setProfile(null); return; }
+    db.fetchProfile(session.user.id)
+      .then(setProfile)
+      .catch((e) => { console.error(e); setLoadError("Impossible de charger ton profil. Contacte le support."); });
+  }, [session]);
 
-  useEffect(() => {
-    if (currentUser && !currentUser.permissions?.[tab]) {
-      const firstAllowed = MODULES.find((m) => currentUser.permissions?.[m.id]);
-      if (firstAllowed) setTab(firstAllowed.id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
+  const handleLogout = async () => {
+    await db.signOut();
+    setProfile(null);
+  };
 
-  if (!data) {
-    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, color: TEXT_MUTED, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
-      <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement...
-    </div>;
+  if (session === undefined) {
+    return <FullScreenLoader />;
   }
-
-  if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
+  if (!session) {
+    return <LoginScreen />;
   }
-
-  const nav = MODULES.filter((m) => currentUser.permissions?.[m.id]);
-  const hasAccess = (id) => !!currentUser.permissions?.[id];
-  const isAdmin = !!currentUser.permissions?.users;
-
-  return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK, display: "flex" }}>
-      <style>{`
-        * { box-sizing: border-box; }
-        button { font-family: inherit; cursor: pointer; }
-        input, select, textarea { font-family: inherit; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-thumb { background: #D8D4C8; border-radius: 4px; }
-      `}</style>
-
-      {/* Menu latéral */}
-      <div style={{ width: 210, background: NAVY, color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "0 8px 20px 8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>ER</div>
-            <div style={{ fontWeight: 800, fontSize: 16 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
-          </div>
-          <div style={{ fontSize: 11, color: "#9BAFC9", marginTop: 6 }}>Connecté à Supabase</div>
-        </div>
-        <div style={{ flex: 1 }}>
-          {nav.map((n) => {
-            const Icon = n.icon; const active = tab === n.id;
-            return (
-              <div key={n.id} onClick={() => setTab(n.id)} style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
-                background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
-                fontSize: 13.5, fontWeight: active ? 700 : 500,
-              }}>
-                <Icon size={16} /> {n.label}
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ borderTop: "1px solid #24304F", paddingTop: 12, marginTop: 12 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{currentUser.name}</div>
-          <div onClick={handleLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", cursor: "pointer" }}>
-            <LogOut size={13} /> Déconnexion
-          </div>
-        </div>
-      </div>
-
-      {/* Contenu */}
-      <div style={{ flex: 1, padding: 24, maxWidth: 1100 }}>
-        {error && (
-          <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>
-            ⚠ {error}
-          </div>
-        )}
-        {tab === "dashboard" && hasAccess("dashboard") && <Dashboard data={data} />}
-        {tab === "bilan" && hasAccess("bilan") && <Bilan data={data} />}
-        {tab === "revenues" && hasAccess("revenues") && <Recettes data={data} run={run} busy={busy} />}
-        {tab === "expenses" && hasAccess("expenses") && <Depenses data={data} run={run} busy={busy} />}
-        {tab === "inventory" && hasAccess("inventory") && <Inventory data={data} run={run} busy={busy} />}
-        {tab === "reservations" && hasAccess("reservations") && <Reservations data={data} run={run} busy={busy} />}
-        {tab === "planning" && hasAccess("planning") && <Planning data={data} />}
-        {tab === "clients" && hasAccess("clients") && <Clients data={data} run={run} />}
-        {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
-        {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
-        {tab === "users" && hasAccess("users") && <UsersPage data={data} run={run} currentUser={currentUser} />}
-        {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
-      </div>
-    </div>
-  );
+  if (loadError) {
+    return <FullScreenMessage title="Erreur" message={loadError} onLogout={handleLogout} />;
+  }
+  if (!profile) {
+    return <FullScreenLoader />;
+  }
+  if (profile.isPlatformAdmin) {
+    return <PlatformAdminApp profile={profile} onLogout={handleLogout} />;
+  }
+  if (!profile.accountId) {
+    return <FullScreenMessage title="Compte non configuré" message="Ton profil n'est rattaché à aucune entreprise. Contacte le support." onLogout={handleLogout} />;
+  }
+  return <TenantApp profile={profile} onLogout={handleLogout} />;
 }
 
-// ---------- Connexion ----------
-function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState("");
+function FullScreenLoader() {
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, color: TEXT_MUTED, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <Loader2 className="spin" size={20} style={{ marginRight: 8 }} /> Chargement...
+  </div>;
+}
+function FullScreenMessage({ title, message, onLogout }) {
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360, textAlign: "center" }}>
+      <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>{title}</div>
+      <div style={{ fontSize: 13.5, color: TEXT_MUTED, marginBottom: 16 }}>{message}</div>
+      <Btn onClick={onLogout} variant="ghost">Se déconnecter</Btn>
+    </div>
+  </div>;
+}
+
+// ---------- Connexion (Supabase Auth) ----------
+function LoginScreen() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!username || !password) return;
+    if (!email || !password) return;
     setError(""); setLoading(true);
     try {
-      const user = await db.verifyLogin(username.trim(), password);
-      if (!user) { setError("Identifiants incorrects."); setLoading(false); return; }
-      onLogin(user);
+      await db.signIn(email.trim(), password);
     } catch (e) {
       console.error(e);
-      setError("Erreur de connexion. Réessaie.");
+      setError("Email ou mot de passe incorrect.");
       setLoading(false);
     }
   };
@@ -334,8 +260,8 @@ function LoginScreen({ onLogin }) {
         <div style={{ fontWeight: 800, fontSize: 18 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
       </div>
       <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Connexion</div>
-      <Field label="Nom d'utilisateur">
-        <input style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
+      <Field label="Email">
+        <input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
       </Field>
       <Field label="Mot de passe">
         <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
@@ -344,6 +270,117 @@ function LoginScreen({ onLogin }) {
       <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
     </div>
   </div>;
+}
+
+// ============================================================
+// Application "entreprise cliente" (tout ce qu'on avait déjà)
+// ============================================================
+function TenantApp({ profile, onLogout }) {
+  const [tab, setTab] = useState("reservations");
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const d = await db.fetchAll(profile.accountId);
+      setData(d);
+      setError(null);
+    } catch (e) {
+      console.error(e);
+      setError(e.message || "Erreur de connexion à la base");
+    }
+  }, [profile.accountId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const run = async (fn) => {
+    setBusy(true);
+    try { await fn(); await refresh(); }
+    catch (e) { console.error(e); setError(e.message || "Une erreur est survenue"); }
+    finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!profile.permissions?.[tab]) {
+      const firstAllowed = MODULES.find((m) => profile.permissions?.[m.id]);
+      if (firstAllowed) setTab(firstAllowed.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile]);
+
+  if (!data) return <FullScreenLoader />;
+
+  const nav = MODULES.filter((m) => profile.permissions?.[m.id]);
+  const hasAccess = (id) => !!profile.permissions?.[id];
+  const isAdmin = !!profile.permissions?.users;
+
+  return (
+    <AccountContext.Provider value={profile.accountId}>
+      <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK, display: "flex" }}>
+        <style>{`
+          * { box-sizing: border-box; }
+          button { font-family: inherit; cursor: pointer; }
+          input, select, textarea { font-family: inherit; }
+          ::-webkit-scrollbar { width: 8px; height: 8px; }
+          ::-webkit-scrollbar-thumb { background: #D8D4C8; border-radius: 4px; }
+        `}</style>
+
+        <div style={{ width: 210, background: NAVY, color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "0 8px 20px 8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>ER</div>
+              <div style={{ fontWeight: 800, fontSize: 16 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
+            </div>
+            <div style={{ fontSize: 11, color: "#9BAFC9", marginTop: 6 }}>Connecté à Supabase</div>
+          </div>
+          <div style={{ flex: 1 }}>
+            {nav.map((n) => {
+              const Icon = n.icon; const active = tab === n.id;
+              return (
+                <div key={n.id} onClick={() => setTab(n.id)} style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "10px 10px", borderRadius: 8, marginBottom: 4,
+                  background: active ? "#1F6F4B" : "transparent", color: active ? "#fff" : "#CBD5CC",
+                  fontSize: 13.5, fontWeight: active ? 700 : 500,
+                }}>
+                  <Icon size={16} /> {n.label}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ borderTop: "1px solid #24304F", paddingTop: 12, marginTop: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{profile.name}</div>
+            <div onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", cursor: "pointer" }}>
+              <LogOut size={13} /> Déconnexion
+            </div>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, padding: 24, maxWidth: 1100 }}>
+          {error && (
+            <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>
+              ⚠ {error}
+            </div>
+          )}
+          {tab === "dashboard" && hasAccess("dashboard") && <Dashboard data={data} />}
+          {tab === "bilan" && hasAccess("bilan") && <Bilan data={data} />}
+          {tab === "revenues" && hasAccess("revenues") && <Recettes data={data} run={run} busy={busy} />}
+          {tab === "expenses" && hasAccess("expenses") && <Depenses data={data} run={run} busy={busy} />}
+          {tab === "inventory" && hasAccess("inventory") && <Inventory data={data} run={run} busy={busy} />}
+          {tab === "reservations" && hasAccess("reservations") && <Reservations data={data} run={run} busy={busy} />}
+          {tab === "planning" && hasAccess("planning") && <Planning data={data} />}
+          {tab === "clients" && hasAccess("clients") && <Clients data={data} run={run} />}
+          {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
+          {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
+          {tab === "users" && hasAccess("users") && <TeamPage data={data} run={run} profile={profile} />}
+          {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
+        </div>
+      </div>
+    </AccountContext.Provider>
+  );
 }
 
 // ---------- shared UI ----------
@@ -373,8 +410,6 @@ function Modal({ title, onClose, children, width = 520 }) {
     </div>
   </div>;
 }
-
-// ---------- Bandeau de section (style Station Service Grâce) ----------
 function PageBanner({ icon: Icon, title, subtitle }) {
   return <div style={{ background: NAVY, color: "#fff", borderRadius: 12, padding: "20px 24px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
     {Icon && <Icon size={22} />}
@@ -384,10 +419,8 @@ function PageBanner({ icon: Icon, title, subtitle }) {
     </div>
   </div>;
 }
-
-// ---------- Carte KPI colorée ----------
 function KpiCard({ icon: Icon, label, value, sub, color }) {
-  return <div style={{ background: "#fff", borderRadius: 10, borderLeft: `4px solid ${color}`, border: `1px solid ${BORDER}`, borderLeftWidth: 4, borderLeftColor: color, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.03)" }}>
+  return <div style={{ background: "#fff", borderRadius: 10, border: `1px solid ${BORDER}`, borderLeftWidth: 4, borderLeftColor: color, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.03)" }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
       <div style={{ width: 32, height: 32, borderRadius: 8, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Icon size={16} color={color} />
@@ -398,12 +431,8 @@ function KpiCard({ icon: Icon, label, value, sub, color }) {
     {sub && <div style={{ fontSize: 11.5, color: "#9CA3AF", marginTop: 2 }}>{sub}</div>}
   </div>;
 }
-
-// ---------- Graphique barres (revenus quotidiens) ----------
 function DailyRevenueChart({ data }) {
-  const days = Array.from({ length: 30 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (29 - i)); return d.toISOString().slice(0, 10);
-  });
+  const days = Array.from({ length: 30 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (29 - i)); return d.toISOString().slice(0, 10); });
   const revenueByDay = days.map((day) => {
     let s = 0;
     data.reservations.forEach((r) => r.payments.forEach((p) => { if (p.date === day) s += p.amount; }));
@@ -413,10 +442,7 @@ function DailyRevenueChart({ data }) {
   const max = Math.max(...revenueByDay.map((d) => d.value), 1);
   return <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 180, padding: "10px 4px 0" }}>
     {revenueByDay.map((d) => (
-      <div key={d.day} title={`${fmtDate(d.day)} : ${fmt(d.value)}`} style={{
-        flex: 1, minWidth: 3, height: `${Math.max((d.value / max) * 100, 2)}%`,
-        background: d.value > 0 ? "#93B4E8" : "#EEF1F6", borderRadius: "3px 3px 0 0",
-      }} />
+      <div key={d.day} title={`${fmtDate(d.day)} : ${fmt(d.value)}`} style={{ flex: 1, minWidth: 3, height: `${Math.max((d.value / max) * 100, 2)}%`, background: d.value > 0 ? "#93B4E8" : "#EEF1F6", borderRadius: "3px 3px 0 0" }} />
     ))}
   </div>;
 }
@@ -425,10 +451,7 @@ function DailyRevenueChart({ data }) {
 function Dashboard({ data }) {
   const now = new Date();
   const monthKey = todayISO().slice(0, 7);
-  const prevMonthKey = useMemo(() => {
-    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
-  }, []);
+  const prevMonthKey = useMemo(() => { const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1); return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`; }, []);
 
   const revenueMonth = useMemo(() => {
     let s = 0;
@@ -442,13 +465,9 @@ function Dashboard({ data }) {
     data.additionalRevenues.forEach((rev) => { if ((rev.date || "").slice(0, 7) === prevMonthKey) s += rev.amount; });
     return s;
   }, [data, prevMonthKey]);
-  const revenueEvolution = revenuePrevMonth === 0
-    ? (revenueMonth > 0 ? 100 : 0)
-    : Math.round(((revenueMonth - revenuePrevMonth) / revenuePrevMonth) * 100);
+  const revenueEvolution = revenuePrevMonth === 0 ? (revenueMonth > 0 ? 100 : 0) : Math.round(((revenueMonth - revenuePrevMonth) / revenuePrevMonth) * 100);
 
-  const expensesMonth = useMemo(() => {
-    return data.expenses.filter((e) => (e.date || "").slice(0, 7) === monthKey).reduce((s, e) => s + e.amount, 0);
-  }, [data, monthKey]);
+  const expensesMonth = useMemo(() => data.expenses.filter((e) => (e.date || "").slice(0, 7) === monthKey).reduce((s, e) => s + e.amount, 0), [data, monthKey]);
   const grossMargin = revenueMonth - expensesMonth;
 
   const upcoming = data.reservations.filter((r) => r.startDate >= todayISO() && r.status !== "Retourné").length;
@@ -465,7 +484,6 @@ function Dashboard({ data }) {
 
   return <div>
     <PageBanner icon={LayoutDashboard} title="Tableau de bord" subtitle={`EventRent CI · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}`} />
-
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 14 }}>
       <KpiCard icon={Wallet} label="Revenus du mois" value={fmt(revenueMonth)} color="#2F6FED" />
       <KpiCard icon={CalendarDays} label="Réservations à venir" value={upcoming} color="#7C5CFC" />
@@ -477,16 +495,13 @@ function Dashboard({ data }) {
       <KpiCard icon={ShieldAlert} label="Cautions non restituées" value={fmt(cautionsHeld)} color="#1F9D63" />
       <KpiCard icon={PiggyBank} label="Marge brute (mois)" value={fmt(grossMargin)} sub="Recettes − Dépenses" color={grossMargin >= 0 ? "#1F9D63" : "#B3261E"} />
     </div>
-
     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginBottom: 20 }}>
       <Card>
         <div style={{ fontWeight: 800, marginBottom: 4 }}>Revenus encaissés (30 derniers jours)</div>
         <DailyRevenueChart data={data} />
       </Card>
       <Card>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800, marginBottom: 10 }}>
-          <AlertTriangle size={15} color="#C9A227" /> Alertes stock
-        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800, marginBottom: 10 }}><AlertTriangle size={15} color="#C9A227" /> Alertes stock</div>
         {lowStock.length === 0 && <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>Aucune alerte pour l'instant.</div>}
         {lowStock.map((i) => <div key={i.id} style={{ fontSize: 12.5, padding: "6px 0", borderBottom: "1px solid #F0EEE7" }}>
           <div style={{ fontWeight: 700 }}>{i.name}</div>
@@ -494,7 +509,6 @@ function Dashboard({ data }) {
         </div>)}
       </Card>
     </div>
-
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <Card>
         <div style={{ fontWeight: 800, marginBottom: 10 }}>Dernières réservations</div>
@@ -507,8 +521,7 @@ function Dashboard({ data }) {
       <Card>
         <div style={{ fontWeight: 800, marginBottom: 10 }}>Articles les plus loués</div>
         {topItems.map(([name, qty], i) => <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0EEE7", fontSize: 13.5 }}>
-          <span>{i + 1}. {name}</span>
-          <b>{qty}×</b>
+          <span>{i + 1}. {name}</span><b>{qty}×</b>
         </div>)}
         {topItems.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune donnée pour l'instant.</div>}
       </Card>
@@ -579,6 +592,7 @@ function Bilan({ data }) {
 
 // ---------- Recettes ----------
 function Recettes({ data, run, busy }) {
+  const accountId = useAccountId();
   const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(todayISO());
@@ -592,7 +606,7 @@ function Recettes({ data, run, busy }) {
   const all = [...rentalRevenues, ...manualRevenues].sort((a, b) => (a.date < b.date ? 1 : -1));
   const total = all.reduce((s, r) => s + r.amount, 0);
 
-  const removeManual = (id) => { if (confirm("Supprimer cette recette ?")) run(() => db.deleteAdditionalRevenue(id)); };
+  const removeManual = (id) => { if (confirm("Supprimer cette recette ?")) run(() => db.deleteAdditionalRevenue(id, accountId)); };
 
   return <div>
     <PageBanner icon={Wallet} title="Recettes" subtitle="Toutes les recettes encaissées, filtrables par date" />
@@ -625,6 +639,7 @@ function Recettes({ data, run, busy }) {
 }
 
 function RevenueModal({ onClose, run }) {
+  const accountId = useAccountId();
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Autre");
@@ -633,7 +648,7 @@ function RevenueModal({ onClose, run }) {
   const save = async () => {
     if (!description || !amount) return;
     setSaving(true);
-    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date })); onClose(); }
+    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date }, accountId)); onClose(); }
     finally { setSaving(false); }
   };
   return <Modal title="Ajouter une recette" onClose={onClose}>
@@ -649,6 +664,7 @@ function RevenueModal({ onClose, run }) {
 
 // ---------- Dépenses ----------
 function Depenses({ data, run, busy }) {
+  const accountId = useAccountId();
   const firstOfMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(todayISO());
@@ -656,7 +672,7 @@ function Depenses({ data, run, busy }) {
 
   const list = data.expenses.filter((e) => e.date >= from && e.date <= to).sort((a, b) => (a.date < b.date ? 1 : -1));
   const total = list.reduce((s, e) => s + e.amount, 0);
-  const remove = (id) => { if (confirm("Supprimer cette dépense ?")) run(() => db.deleteExpense(id)); };
+  const remove = (id) => { if (confirm("Supprimer cette dépense ?")) run(() => db.deleteExpense(id, accountId)); };
 
   return <div>
     <PageBanner icon={Receipt} title="Dépenses" subtitle="Toutes les dépenses, filtrables par date" />
@@ -689,6 +705,7 @@ function Depenses({ data, run, busy }) {
 }
 
 function ExpenseModal({ onClose, run }) {
+  const accountId = useAccountId();
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Autre");
@@ -697,7 +714,7 @@ function ExpenseModal({ onClose, run }) {
   const save = async () => {
     if (!description || !amount) return;
     setSaving(true);
-    try { await run(() => db.createExpense({ description, amount: +amount, category, date })); onClose(); }
+    try { await run(() => db.createExpense({ description, amount: +amount, category, date }, accountId)); onClose(); }
     finally { setSaving(false); }
   };
   return <Modal title="Ajouter une dépense" onClose={onClose}>
@@ -713,6 +730,7 @@ function ExpenseModal({ onClose, run }) {
 
 // ---------- Inventory ----------
 function Inventory({ data, run, busy }) {
+  const accountId = useAccountId();
   const [modal, setModal] = useState(null);
   const [checkDate, setCheckDate] = useState(todayISO());
   const availability = (item) => {
@@ -720,8 +738,8 @@ function Inventory({ data, run, busy }) {
       .reduce((s, r) => s + (r.items.find((it) => it.itemId === item.id)?.qty || 0), 0);
     return item.total - rented;
   };
-  const save = (item) => run(() => db.saveInventoryItem(item)).then(() => setModal(null));
-  const remove = (id) => { if (confirm("Supprimer cet article ?")) run(() => db.deleteInventoryItem(id)); };
+  const save = (item) => run(() => db.saveInventoryItem(item, accountId)).then(() => setModal(null));
+  const remove = (id) => { if (confirm("Supprimer cet article ?")) run(() => db.deleteInventoryItem(id, accountId)); };
 
   return <div>
     <PageBanner icon={Package} title="Inventaire" subtitle="Articles, disponibilité et prix" />
@@ -754,18 +772,8 @@ function Inventory({ data, run, busy }) {
 function ItemModal({ item, onClose, onSave }) {
   const [f, setF] = useState({ name: "", category: "", total: 0, unit: 0, low: 1, photo: null, ...item });
   const handlePhoto = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setF((s) => ({ ...s, photo: reader.result })); reader.readAsDataURL(file); };
-  const handleNumber = (field) => (e) => {
-    const v = e.target.value;
-    setF((s) => ({ ...s, [field]: v === "" ? "" : v.replace(/^0+(?=\d)/, "") }));
-  };
-  const save = () => {
-    onSave({
-      ...f,
-      total: parseInt(f.total, 10) || 0,
-      unit: parseInt(f.unit, 10) || 0,
-      low: parseInt(f.low, 10) || 0,
-    });
-  };
+  const handleNumber = (field) => (e) => { const v = e.target.value; setF((s) => ({ ...s, [field]: v === "" ? "" : v.replace(/^0+(?=\d)/, "") })); };
+  const save = () => { onSave({ ...f, total: parseInt(f.total, 10) || 0, unit: parseInt(f.unit, 10) || 0, low: parseInt(f.low, 10) || 0 }); };
   return <Modal title={item.id ? "Modifier l'article" : "Nouvel article"} onClose={onClose}>
     <Field label="Nom"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
     <Field label="Catégorie"><input style={inputStyle} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /></Field>
@@ -784,12 +792,12 @@ function ItemModal({ item, onClose, onSave }) {
 
 // ---------- Reservations ----------
 function Reservations({ data, run, busy }) {
+  const accountId = useAccountId();
   const [modal, setModal] = useState(false);
   const [openId, setOpenId] = useState(null);
-  const [editRes, setEditRes] = useState(null);
+  const [editId, setEditId] = useState(null);
   const [filter, setFilter] = useState("Tous");
   const list = data.reservations.filter((r) => filter === "Tous" || r.status === filter).slice().reverse();
-  const remove = (id) => { if (confirm("Supprimer cette réservation ? Cette action est irréversible.")) run(() => db.deleteReservation(id)); };
 
   return <div>
     <PageBanner icon={CalendarDays} title="Réservations" subtitle="Commandes et suivi des paiements" />
@@ -802,8 +810,8 @@ function Reservations({ data, run, busy }) {
         const total = reservationTotal(r);
         const paid = r.payments.reduce((s, p) => s + p.amount, 0);
         return <Card key={r.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-            <div onClick={() => setOpenId(r.id)} style={{ cursor: "pointer", flex: 1 }}>
+          <div onClick={() => setOpenId(r.id)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+            <div>
               <div style={{ fontWeight: 800, fontSize: 14.5 }}>{r.clientName} <span style={{ fontWeight: 500, color: "#8A857A", fontSize: 12.5 }}>· {r.startDate} → {r.endDate}</span></div>
               <div style={{ fontSize: 12.5, color: "#5B564C", marginTop: 3 }}>{r.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</div>
             </div>
@@ -811,82 +819,19 @@ function Reservations({ data, run, busy }) {
               <Badge text={r.status} bg={STATUS_COLORS[r.status].bg} fg={STATUS_COLORS[r.status].fg} />
               <div style={{ fontSize: 12.5, marginTop: 5, color: paid >= total ? "#1F6F4B" : "#B3261E", fontWeight: 700 }}>{fmt(paid)} / {fmt(total)} payé</div>
             </div>
-            <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
-              <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setEditRes(r)} />
-              <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(r.id)} />
-            </div>
           </div>
         </Card>;
       })}
       {list.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucune commande dans ce filtre.</div></Card>}
     </div>
     {modal && <NewReservationModal data={data} run={run} onClose={() => setModal(false)} />}
-    {openId && <ReservationDetail data={data} run={run} id={openId} onClose={() => setOpenId(null)} />}
-    {editRes && <EditReservationModal data={data} run={run} reservation={editRes} onClose={() => setEditRes(null)} />}
+    {openId && <ReservationDetail data={data} run={run} id={openId} onClose={() => setOpenId(null)} onEdit={(id) => { setOpenId(null); setEditId(id); }} />}
+    {editId && <EditReservationModal data={data} run={run} reservation={data.reservations.find((r) => r.id === editId)} onClose={() => setEditId(null)} />}
   </div>;
 }
 
-function EditReservationModal({ data, run, reservation, onClose }) {
-  const [selectedItems, setSelectedItems] = useState(() => {
-    const obj = {};
-    reservation.items.forEach((it) => { obj[it.itemId] = it.qty; });
-    return obj;
-  });
-  const [start, setStart] = useState(reservation.startDate);
-  const [end, setEnd] = useState(reservation.endDate);
-  const [address, setAddress] = useState(reservation.address || "");
-  const [zone, setZone] = useState(reservation.zone);
-  const [seasonal, setSeasonal] = useState(reservation.seasonal);
-  const [caution, setCaution] = useState(reservation.caution);
-  const [driverId, setDriverId] = useState(reservation.driverId || "");
-  const [saving, setSaving] = useState(false);
-
-  const submit = async () => {
-    const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => {
-      const inv = data.inventory.find((i) => i.id === itemId);
-      return { itemId, qty, unit: inv ? inv.unit : 0 };
-    });
-    if (items.length === 0 || !start || !end) return;
-    setSaving(true);
-    try {
-      await run(async () => {
-        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0 });
-        await db.updateReservationItems(reservation.id, items);
-      });
-      onClose();
-    } finally { setSaving(false); }
-  };
-
-  return <Modal title={`Modifier la commande — ${reservation.clientName}`} onClose={onClose} width={640}>
-    <Field label="Articles et quantités">
-      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
-        {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
-          <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
-          <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
-        </div>)}
-      </div>
-    </Field>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Date de début"><input type="date" style={inputStyle} value={start} onChange={(e) => setStart(e.target.value)} /></Field>
-      <Field label="Date de fin"><input type="date" style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
-    </div>
-    <Field label="Adresse de livraison"><input style={inputStyle} value={address} onChange={(e) => setAddress(e.target.value)} /></Field>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-      <Field label="Zone de livraison"><select style={inputStyle} value={zone} onChange={(e) => setZone(e.target.value)}>{ZONES.map((z) => <option key={z.id} value={z.id}>{z.label} (+{fmt(z.fee)})</option>)}</select></Field>
-      <Field label="Tarification"><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8 }}><input type="checkbox" checked={seasonal} onChange={(e) => setSeasonal(e.target.checked)} /> Haute saison (+20%)</label></Field>
-    </div>
-    <Field label="Livreur">
-      <select style={inputStyle} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
-        <option value="">Non assigné</option>
-        {data.drivers.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.type === "externe" ? "freelance" : "interne"})</option>)}
-      </select>
-    </Field>
-    <Field label="Caution (FCFA)"><input type="number" style={inputStyle} value={caution} onChange={(e) => setCaution(e.target.value)} /></Field>
-    <Btn disabled={saving} onClick={submit}>{saving ? "Enregistrement..." : "Enregistrer les modifications"}</Btn>
-  </Modal>;
-}
-
 function NewReservationModal({ data, run, onClose }) {
+  const accountId = useAccountId();
   const [clientMode, setClientMode] = useState("existing");
   const [clientId, setClientId] = useState(data.clients[0]?.id || "");
   const [newClient, setNewClient] = useState({ name: "", phone: "" });
@@ -912,12 +857,12 @@ function NewReservationModal({ data, run, onClose }) {
     setSaving(true);
     try {
       let cId = clientId;
-      if (clientMode === "new") { if (!newClient.name) { setSaving(false); return; } cId = await db.createClient(newClient.name, newClient.phone); }
+      if (clientMode === "new") { if (!newClient.name) { setSaving(false); return; } cId = await db.createClient(newClient.name, newClient.phone, accountId); }
       let dId = driverId || null;
-      if (driverId === "__new_freelance") { if (!freelance.name) { setSaving(false); return; } dId = await db.createDriver(freelance.name, freelance.phone, "externe", +freelance.fee || 0); }
+      if (driverId === "__new_freelance") { if (!freelance.name) { setSaving(false); return; } dId = await db.createDriver(freelance.name, freelance.phone, "externe", +freelance.fee || 0, accountId); }
       const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => { const inv = data.inventory.find((i) => i.id === itemId); return { itemId, qty, unit: inv.unit }; });
       if (items.length === 0 || !start || !end) { setSaving(false); return; }
-      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode }));
+      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode }, accountId));
       onClose();
     } finally { setSaving(false); }
   };
@@ -974,7 +919,63 @@ function NewReservationModal({ data, run, onClose }) {
   </Modal>;
 }
 
-function ReservationDetail({ data, run, id, onClose }) {
+function EditReservationModal({ data, run, reservation, onClose }) {
+  const accountId = useAccountId();
+  const [selectedItems, setSelectedItems] = useState(() => { const obj = {}; reservation.items.forEach((it) => { obj[it.itemId] = it.qty; }); return obj; });
+  const [start, setStart] = useState(reservation.startDate);
+  const [end, setEnd] = useState(reservation.endDate);
+  const [address, setAddress] = useState(reservation.address || "");
+  const [zone, setZone] = useState(reservation.zone);
+  const [seasonal, setSeasonal] = useState(reservation.seasonal);
+  const [caution, setCaution] = useState(reservation.caution);
+  const [driverId, setDriverId] = useState(reservation.driverId || "");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => { const inv = data.inventory.find((i) => i.id === itemId); return { itemId, qty, unit: inv ? inv.unit : 0 }; });
+    if (items.length === 0 || !start || !end) return;
+    setSaving(true);
+    try {
+      await run(async () => {
+        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0 }, accountId);
+        await db.updateReservationItems(reservation.id, items, accountId);
+      });
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  return <Modal title={`Modifier la commande — ${reservation.clientName}`} onClose={onClose} width={640}>
+    <Field label="Client"><div style={{ ...inputStyle, background: "#F1EFE8", color: "#5B564C" }}>{reservation.clientName}</div></Field>
+    <Field label="Articles et quantités">
+      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
+        {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
+          <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
+          <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
+        </div>)}
+      </div>
+    </Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Date de début"><input type="date" style={inputStyle} value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+      <Field label="Date de fin"><input type="date" style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+    </div>
+    <Field label="Adresse de livraison"><input style={inputStyle} value={address} onChange={(e) => setAddress(e.target.value)} /></Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Zone de livraison"><select style={inputStyle} value={zone} onChange={(e) => setZone(e.target.value)}>{ZONES.map((z) => <option key={z.id} value={z.id}>{z.label} (+{fmt(z.fee)})</option>)}</select></Field>
+      <Field label="Tarification"><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8 }}><input type="checkbox" checked={seasonal} onChange={(e) => setSeasonal(e.target.checked)} /> Haute saison (+20%)</label></Field>
+    </div>
+    <Field label="Livreur">
+      <select style={inputStyle} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
+        <option value="">Non assigné</option>
+        {data.drivers.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.type === "externe" ? "freelance" : "interne"})</option>)}
+      </select>
+    </Field>
+    <Field label="Caution (FCFA)"><input type="number" style={inputStyle} value={caution} onChange={(e) => setCaution(e.target.value)} /></Field>
+    <Btn disabled={saving} onClick={submit}>{saving ? "Enregistrement..." : "Enregistrer les modifications"}</Btn>
+  </Modal>;
+}
+
+function ReservationDetail({ data, run, id, onClose, onEdit }) {
+  const accountId = useAccountId();
   const r = data.reservations.find((x) => x.id === id);
   const [payAmount, setPayAmount] = useState("");
   const [payMode, setPayMode] = useState("Espèces");
@@ -984,18 +985,29 @@ function ReservationDetail({ data, run, id, onClose }) {
   const paid = r.payments.reduce((s, p) => s + p.amount, 0);
   const driver = data.drivers.find((d) => d.id === r.driverId);
 
-  const addPayment = () => { if (!payAmount || +payAmount <= 0) return; run(() => db.addPayment(r.id, +payAmount, payMode)); setPayAmount(""); };
-  const handlePhoto = (e, saveFn) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => run(() => saveFn(r.id, reader.result)); reader.readAsDataURL(file); };
+  const addPayment = () => { if (!payAmount || +payAmount <= 0) return; run(() => db.addPayment(r.id, +payAmount, payMode, accountId)); setPayAmount(""); };
+  const handlePhoto = (e, saveFn) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => run(() => saveFn(r.id, reader.result, accountId)); reader.readAsDataURL(file); };
   const confirmCheckIn = () => {
     const damagedByRiId = {};
     r.items.forEach((it) => { damagedByRiId[it.riId] = damaged[it.itemId] || 0; });
     const damagedTotal = Object.values(damagedByRiId).reduce((s, v) => s + (Number(v) || 0), 0) * 2000;
-    run(() => db.closeCheckIn(r.id, damagedByRiId, r.caution - damagedTotal));
+    run(() => db.closeCheckIn(r.id, damagedByRiId, r.caution - damagedTotal, accountId));
+  };
+  const handleDelete = () => {
+    if (confirm("Supprimer définitivement cette commande ? Cette action est irréversible.")) {
+      run(() => db.deleteReservation(r.id, accountId)).then(() => onClose());
+    }
   };
 
   return <Modal title={`Commande — ${r.clientName}`} onClose={onClose} width={620}>
-    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-      {STATUS_FLOW.map((s) => <Btn key={s} small variant={r.status === s ? "primary" : "ghost"} onClick={() => run(() => db.setStatus(r.id, s))}>{s}</Btn>)}
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {STATUS_FLOW.map((s) => <Btn key={s} small variant={r.status === s ? "primary" : "ghost"} onClick={() => run(() => db.setStatus(r.id, s, accountId))}>{s}</Btn>)}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <Pencil size={16} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => onEdit(r.id)} />
+        <Trash2 size={16} style={{ cursor: "pointer", color: "#B3261E" }} onClick={handleDelete} />
+      </div>
     </div>
     <Card style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 13, marginBottom: 4 }}><b>Dates :</b> {r.startDate} → {r.endDate}</div>
@@ -1023,7 +1035,7 @@ function ReservationDetail({ data, run, id, onClose }) {
       <div style={{ fontWeight: 800, marginBottom: 8 }}>État des lieux — sortie (avant livraison)</div>
       <input type="file" accept="image/*" onChange={(e) => handlePhoto(e, db.saveCheckoutPhoto)} style={{ fontSize: 12.5 }} />
       {r.checkOut && <img src={r.checkOut} alt="" style={{ width: 70, height: 70, objectFit: "cover", borderRadius: 6, marginTop: 8 }} />}
-      <div style={{ marginTop: 8 }}><Btn small icon={PackageCheck} onClick={() => run(() => db.setStatus(r.id, "Livré"))}>Confirmer la livraison</Btn></div>
+      <div style={{ marginTop: 8 }}><Btn small icon={PackageCheck} onClick={() => run(() => db.setStatus(r.id, "Livré", accountId))}>Confirmer la livraison</Btn></div>
     </Card>}
     {r.status === "Livré" && <Card style={{ marginBottom: 12 }}>
       <div style={{ fontWeight: 800, marginBottom: 8 }}>État des lieux — retour</div>
@@ -1067,14 +1079,12 @@ function Planning({ data }) {
 
 // ---------- Clients ----------
 function Clients({ data, run }) {
+  const accountId = useAccountId();
   const [modal, setModal] = useState(null);
   const historyFor = (clientId) => data.reservations.filter((r) => r.clientId === clientId);
-  const remove = (id) => {
-    if (data.reservations.some((r) => r.clientId === id)) {
-      alert("Impossible de supprimer : ce client a des réservations associées.");
-      return;
-    }
-    if (confirm("Supprimer ce client ?")) run(() => db.deleteClient(id));
+  const remove = (c, hist) => {
+    if (hist.length > 0) { alert("Impossible de supprimer ce client : il a des réservations associées. Supprime d'abord ses réservations."); return; }
+    if (confirm(`Supprimer le client ${c.name} ?`)) run(() => db.deleteClient(c.id, accountId));
   };
   return <div>
     <PageBanner icon={Users} title="Clients" subtitle="Historique et vigilance" />
@@ -1084,34 +1094,33 @@ function Clients({ data, run }) {
         const spent = hist.reduce((s, r) => s + r.payments.reduce((s2, p) => s2 + p.amount, 0), 0);
         const damages = hist.filter((r) => (r.damaged || []).some((d) => d.qty > 0)).length;
         return <Card key={c.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
             <div>
               <div style={{ fontWeight: 800 }}>{c.name} {c.flagged && <Badge text="À surveiller" bg="#FBEAE8" fg="#B3261E" />}</div>
               <div style={{ fontSize: 12.5, color: "#8A857A", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {c.phone}</div>
             </div>
             <div style={{ textAlign: "right", fontSize: 12.5 }}><div>Total payé : <b>{fmt(spent)}</b></div><div>{hist.length} commande(s) · {damages} avec casse</div></div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-              <Btn small variant={c.flagged ? "danger" : "ghost"} onClick={() => run(() => db.setClientFlag(c.id, !c.flagged))}>{c.flagged ? "Retirer vigilance" : "Mettre en vigilance"}</Btn>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Btn small variant={c.flagged ? "danger" : "ghost"} onClick={() => run(() => db.setClientFlag(c.id, !c.flagged, accountId))}>{c.flagged ? "Retirer vigilance" : "Mettre en vigilance"}</Btn>
               <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(c)} />
-              <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(c.id)} />
+              <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(c, hist)} />
             </div>
           </div>
         </Card>;
       })}
     </div>
-    {modal && <ClientEditModal client={modal} onClose={() => setModal(null)} run={run} />}
+    {modal && <ClientModal client={modal} onClose={() => setModal(null)} run={run} />}
   </div>;
 }
-
-function ClientEditModal({ client, onClose, run }) {
+function ClientModal({ client, onClose, run }) {
+  const accountId = useAccountId();
   const [name, setName] = useState(client.name);
   const [phone, setPhone] = useState(client.phone);
   const [saving, setSaving] = useState(false);
   const save = async () => {
     if (!name) return;
     setSaving(true);
-    try { await run(() => db.updateClient(client.id, name, phone)); onClose(); }
-    finally { setSaving(false); }
+    try { await run(() => db.updateClient(client.id, name, phone, accountId)); onClose(); } finally { setSaving(false); }
   };
   return <Modal title="Modifier le client" onClose={onClose}>
     <Field label="Nom"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
@@ -1122,48 +1131,48 @@ function ClientEditModal({ client, onClose, run }) {
 
 // ---------- Drivers ----------
 function Drivers({ data, run }) {
+  const accountId = useAccountId();
   const [modal, setModal] = useState(false);
-  const [editDriver, setEditDriver] = useState(null);
-  const [f, setF] = useState({ name: "", phone: "", type: "interne", fee: 0 });
-  const add = () => { if (!f.name) return; run(() => db.createDriver(f.name, f.phone, f.type, +f.fee)); setF({ name: "", phone: "", type: "interne", fee: 0 }); setModal(false); };
-  const remove = (id) => { if (confirm("Supprimer ce livreur ? Les réservations liées seront désassignées.")) run(() => db.deleteDriver(id)); };
+  const [editing, setEditing] = useState(null);
+  const assignedCount = (driverId) => data.reservations.filter((r) => r.driverId === driverId).length;
+  const remove = (d) => {
+    if (assignedCount(d.id) > 0) { alert("Ce livreur est assigné à des réservations. Il sera désassigné automatiquement."); }
+    if (confirm(`Supprimer le livreur ${d.name} ?`)) run(() => db.deleteDriver(d.id, accountId));
+  };
   return <div>
     <PageBanner icon={Truck} title="Livreurs" subtitle="Internes et freelances" />
     <SectionTitle action={<Btn icon={Plus} onClick={() => setModal(true)}>Ajouter un livreur</Btn>}>&nbsp;</SectionTitle>
     <div style={{ display: "grid", gap: 10 }}>
       {data.drivers.map((d) => <Card key={d.id}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <div><div style={{ fontWeight: 800 }}>{d.name}</div><div style={{ fontSize: 12.5, color: "#8A857A", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {d.phone}</div></div>
           <Badge text={d.type === "externe" ? "Freelance / externe" : "Interne"} bg={d.type === "externe" ? "#FBF0DA" : "#DCEAFB"} fg={d.type === "externe" ? "#9A6A00" : "#1D5FA8"} />
           {d.type === "externe" && <div style={{ fontSize: 12.5 }}>Frais/course : {fmt(d.fee)}</div>}
-          <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
-            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setEditDriver(d)} />
-            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(d.id)} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setEditing(d)} />
+            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(d)} />
           </div>
         </div>
       </Card>)}
     </div>
-    {modal && <Modal title="Nouveau livreur" onClose={() => setModal(false)}>
-      <Field label="Nom"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-      <Field label="Téléphone"><input style={inputStyle} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
-      <Field label="Type"><select style={inputStyle} value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="interne">Interne (salarié)</option><option value="externe">Freelance / externe</option></select></Field>
-      {f.type === "externe" && <Field label="Frais par course (FCFA)"><input type="number" style={inputStyle} value={f.fee} onChange={(e) => setF({ ...f, fee: e.target.value })} /></Field>}
-      <Btn onClick={add}>Ajouter</Btn>
-    </Modal>}
-    {editDriver && <DriverEditModal driver={editDriver} onClose={() => setEditDriver(null)} run={run} />}
+    {modal && <DriverFormModal title="Nouveau livreur" driver={null} onClose={() => setModal(false)} run={run} />}
+    {editing && <DriverFormModal title="Modifier le livreur" driver={editing} onClose={() => setEditing(null)} run={run} />}
   </div>;
 }
-
-function DriverEditModal({ driver, onClose, run }) {
-  const [f, setF] = useState({ ...driver });
+function DriverFormModal({ title, driver, onClose, run }) {
+  const accountId = useAccountId();
+  const [f, setF] = useState({ name: driver?.name || "", phone: driver?.phone || "", type: driver?.type || "interne", fee: driver?.fee || 0 });
   const [saving, setSaving] = useState(false);
   const save = async () => {
     if (!f.name) return;
     setSaving(true);
-    try { await run(() => db.updateDriver(driver.id, f.name, f.phone, f.type, +f.fee || 0)); onClose(); }
-    finally { setSaving(false); }
+    try {
+      if (driver) await run(() => db.updateDriver(driver.id, f.name, f.phone, f.type, +f.fee || 0, accountId));
+      else await run(() => db.createDriver(f.name, f.phone, f.type, +f.fee || 0, accountId));
+      onClose();
+    } finally { setSaving(false); }
   };
-  return <Modal title="Modifier le livreur" onClose={onClose}>
+  return <Modal title={title} onClose={onClose}>
     <Field label="Nom"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
     <Field label="Téléphone"><input style={inputStyle} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
     <Field label="Type"><select style={inputStyle} value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="interne">Interne (salarié)</option><option value="externe">Freelance / externe</option></select></Field>
@@ -1172,36 +1181,24 @@ function DriverEditModal({ driver, onClose, run }) {
   </Modal>;
 }
 
-// ---------- Settings (personnalisation devis) ----------
+// ---------- Settings ----------
 function SettingsPage({ data, run, busy }) {
+  const accountId = useAccountId();
   const [f, setF] = useState({ ...data.settings });
   const [saved, setSaved] = useState(false);
-
   const handleLogo = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = () => setF((s) => ({ ...s, logo: reader.result }));
     reader.readAsDataURL(file);
   };
-
-  const save = () => {
-    setSaved(false);
-    run(() => db.saveSettings(f)).then(() => setSaved(true));
-  };
-
+  const save = () => { setSaved(false); run(() => db.saveSettings(f, accountId)).then(() => setSaved(true)); };
   return <div>
     <PageBanner icon={SettingsIcon} title="Paramètres" subtitle="Personnalisation du devis" />
     <Card style={{ maxWidth: 480 }}>
-      <Field label="Nom de l'entreprise (en-tête du devis)">
-        <input style={inputStyle} value={f.companyName} onChange={(e) => { setF({ ...f, companyName: e.target.value }); setSaved(false); }} />
-      </Field>
-      <Field label="Téléphone / contact (affiché sous le nom)">
-        <input style={inputStyle} placeholder="Ex: +225 07 00 00 00 00" value={f.phone} onChange={(e) => { setF({ ...f, phone: e.target.value }); setSaved(false); }} />
-      </Field>
-      <Field label="Mention en pied de page">
-        <input style={inputStyle} value={f.footerText} onChange={(e) => { setF({ ...f, footerText: e.target.value }); setSaved(false); }} />
-      </Field>
+      <Field label="Nom de l'entreprise (en-tête du devis)"><input style={inputStyle} value={f.companyName} onChange={(e) => { setF({ ...f, companyName: e.target.value }); setSaved(false); }} /></Field>
+      <Field label="Téléphone / contact (affiché sous le nom)"><input style={inputStyle} placeholder="Ex: +225 07 00 00 00 00" value={f.phone} onChange={(e) => { setF({ ...f, phone: e.target.value }); setSaved(false); }} /></Field>
+      <Field label="Mention en pied de page"><input style={inputStyle} value={f.footerText} onChange={(e) => { setF({ ...f, footerText: e.target.value }); setSaved(false); }} /></Field>
       <Field label="Logo (affiché en haut à gauche du devis)">
         <input type="file" accept="image/*" onChange={handleLogo} style={{ fontSize: 12.5 }} />
         {f.logo && <div style={{ marginTop: 10 }}>
@@ -1217,69 +1214,138 @@ function SettingsPage({ data, run, busy }) {
   </div>;
 }
 
-// ---------- Utilisateurs (accès personnalisables) ----------
-function UsersPage({ data, run, currentUser }) {
+// ---------- Équipe ----------
+function TeamPage({ data, run, profile }) {
+  const accountId = useAccountId();
   const [modal, setModal] = useState(null);
-  const remove = (id) => {
-    if (id === currentUser.id) { alert("Tu ne peux pas supprimer ton propre compte."); return; }
-    if (confirm("Supprimer cet utilisateur ?")) run(() => db.deleteUser(id));
-  };
   return <div>
-    <PageBanner icon={UserCog} title="Utilisateurs" subtitle="Comptes et droits d'accès" />
-    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un utilisateur</Btn>}>&nbsp;</SectionTitle>
+    <PageBanner icon={UserCog} title="Équipe" subtitle="Membres et droits d'accès de ton entreprise" />
+    <Card style={{ marginBottom: 16, background: "#FEFAEF", borderColor: "#F0DCA0" }}>
+      <div style={{ fontSize: 12.5, color: "#9A6A00" }}>
+        Pour ajouter un nouveau membre, il doit d'abord créer son propre compte via la page d'inscription (bientôt disponible). Tu pourras ensuite lui attribuer ses droits ici.
+      </div>
+    </Card>
     <div style={{ display: "grid", gap: 10 }}>
       {data.users.map((u) => <Card key={u.id}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontWeight: 800 }}>{u.name} {u.id === currentUser.id && <Badge text="Toi" bg="#DCEAFB" fg="#1D5FA8" />}</div>
-            <div style={{ fontSize: 12.5, color: "#8A857A" }}>@{u.username}</div>
+            <div style={{ fontWeight: 800 }}>{u.name} {u.id === profile.id && <Badge text="Toi" bg="#DCEAFB" fg="#1D5FA8" />}</div>
             <div style={{ fontSize: 11.5, color: "#8A857A", marginTop: 4 }}>
               Accès : {MODULES.filter((m) => u.permissions?.[m.id]).map((m) => m.label).join(", ") || "Aucun"}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(u)} />
-            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(u.id)} />
-          </div>
+          <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(u)} />
         </div>
       </Card>)}
-      {data.users.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun utilisateur (la table 'users' a-t-elle bien été créée dans Supabase ?)</div></Card>}
     </div>
-    {modal !== null && <UserModal user={modal} onClose={() => setModal(null)} run={run} />}
+    {modal && <TeamMemberModal member={modal} onClose={() => setModal(null)} run={run} />}
   </div>;
 }
-
-function UserModal({ user, onClose, run }) {
-  const defaultPerms = { dashboard: false, bilan: false, revenues: false, expenses: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
-  const [f, setF] = useState({ name: "", username: "", password: "", permissions: defaultPerms, ...user, permissions: { ...defaultPerms, ...(user.permissions || {}) } });
+function TeamMemberModal({ member, onClose, run }) {
+  const accountId = useAccountId();
+  const [name, setName] = useState(member.name);
+  const [permissions, setPermissions] = useState({ ...member.permissions });
   const [saving, setSaving] = useState(false);
-  const togglePerm = (id) => setF((s) => ({ ...s, permissions: { ...s.permissions, [id]: !s.permissions?.[id] } }));
-
+  const togglePerm = (id) => setPermissions((p) => ({ ...p, [id]: !p[id] }));
   const save = async () => {
-    if (!f.name || !f.username) return;
-    if (!f.id && !f.password) { alert("Un mot de passe est requis pour un nouvel utilisateur."); return; }
     setSaving(true);
     try {
-      await run(() => (f.id ? db.updateUser(f) : db.createUser(f)));
+      await run(async () => {
+        await db.updateTeamMemberName(member.id, name, accountId);
+        await db.updateTeamMemberPermissions(member.id, permissions, accountId);
+      });
       onClose();
     } finally { setSaving(false); }
   };
-
-  return <Modal title={user.id ? "Modifier l'utilisateur" : "Nouvel utilisateur"} onClose={onClose}>
-    <Field label="Nom complet"><input style={inputStyle} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-    <Field label="Nom d'utilisateur"><input style={inputStyle} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field>
-    <Field label={f.id ? "Nouveau mot de passe (laisser vide pour ne pas changer)" : "Mot de passe"}>
-      <input type="password" style={inputStyle} value={f.password || ""} onChange={(e) => setF({ ...f, password: e.target.value })} />
-    </Field>
+  return <Modal title="Modifier le membre" onClose={onClose}>
+    <Field label="Nom complet"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
     <Field label="Modules accessibles">
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
         {MODULES.map((m) => (
           <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-            <input type="checkbox" checked={!!f.permissions?.[m.id]} onChange={() => togglePerm(m.id)} /> {m.label}
+            <input type="checkbox" checked={!!permissions[m.id]} onChange={() => togglePerm(m.id)} /> {m.label}
           </label>
         ))}
       </div>
     </Field>
     <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
   </Modal>;
+}
+
+// ============================================================
+// Application "super-admin plateforme"
+// ============================================================
+function PlatformAdminApp({ profile, onLogout }) {
+  const [accounts, setAccounts] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try { setAccounts(await db.fetchAllAccounts()); setError(null); }
+    catch (e) { console.error(e); setError(e.message); }
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const run = async (fn) => {
+    setBusy(true);
+    try { await fn(); await refresh(); }
+    catch (e) { console.error(e); setError(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const daysLeft = (trialEnd) => {
+    const diff = Math.ceil((new Date(trialEnd) - new Date()) / (1000 * 60 * 60 * 24));
+    return diff;
+  };
+  const statusBadge = (status) => {
+    const map = { trial: { bg: "#FBF0DA", fg: "#9A6A00", label: "Essai" }, active: { bg: "#DFF0E8", fg: "#1F6F4B", label: "Actif" }, expired: { bg: "#FBEAE8", fg: "#B3261E", label: "Expiré" }, cancelled: { bg: "#EAE8E2", fg: "#5B564C", label: "Résilié" } };
+    const s = map[status] || map.trial;
+    return <Badge text={s.label} bg={s.bg} fg={s.fg} />;
+  };
+
+  const activate = (accountId) => run(() => db.updateAccountStatus(accountId, { status: "active" }));
+  const extendTrial = (accountId) => {
+    const d = new Date(); d.setDate(d.getDate() + 14);
+    run(() => db.updateAccountStatus(accountId, { status: "trial", trialEnd: d.toISOString().slice(0, 10) }));
+  };
+  const cancel = (accountId) => { if (confirm("Résilier ce compte ?")) run(() => db.updateAccountStatus(accountId, { status: "cancelled" })); };
+
+  return <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK }}>
+    <style>{`* { box-sizing: border-box; } button { font-family: inherit; cursor: pointer; }`}</style>
+    <div style={{ background: NAVY, color: "#fff", padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <ShieldCheck size={22} />
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 17 }}>Super-admin — Plateforme EventRent CI</div>
+          <div style={{ fontSize: 11.5, color: "#9BAFC9" }}>{profile.name}</div>
+        </div>
+      </div>
+      <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.12)", color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <LogOut size={13} /> Déconnexion
+      </button>
+    </div>
+    <div style={{ padding: 24, maxWidth: 1000, margin: "0 auto" }}>
+      {error && <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>⚠ {error}</div>}
+      <SectionTitle>Comptes clients ({accounts?.length || 0})</SectionTitle>
+      {!accounts ? <FullScreenLoader /> : <div style={{ display: "grid", gap: 10 }}>
+        {accounts.map((a) => <Card key={a.id}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>{a.companyName} {statusBadge(a.status)}</div>
+              <div style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 3 }}>
+                Inscrit le {fmtDate(a.createdAt)} · Plan {a.plan}
+                {a.status === "trial" && ` · ${daysLeft(a.trialEnd)} jour(s) d'essai restant(s)`}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {a.status !== "active" && <Btn small disabled={busy} onClick={() => activate(a.id)}>Activer</Btn>}
+              {a.status === "trial" && <Btn small variant="ghost" disabled={busy} onClick={() => extendTrial(a.id)}>Prolonger l'essai</Btn>}
+              {a.status !== "cancelled" && <Btn small variant="danger" disabled={busy} onClick={() => cancel(a.id)}>Résilier</Btn>}
+            </div>
+          </div>
+        </Card>)}
+        {accounts.length === 0 && <Card><div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun compte client pour l'instant.</div></Card>}
+      </div>}
+    </div>
+  </div>;
 }
