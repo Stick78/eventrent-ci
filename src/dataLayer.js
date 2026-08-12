@@ -1,4 +1,4 @@
-import { supabase, supabaseSignup } from "./supabaseClient";
+import { supabase, supabaseSignup, createAuthedClient } from "./supabaseClient";
 
 // ---------- mapping helpers (snake_case DB -> camelCase UI) ----------
 const mapInventory = (r) => ({
@@ -103,8 +103,13 @@ export async function signUpCompany({ companyName, adminName, email, password })
   if (e1) throw e1;
   const userId = authData.user?.id;
   if (!userId) throw new Error("Inscription incomplète, réessaie.");
+  if (!authData.session) throw new Error("Inscription incomplète (session manquante), réessaie.");
 
-  const { data: account, error: e2 } = await supabase.from("accounts")
+  // On utilise le jeton du tout nouvel utilisateur pour créer son entreprise
+  // et son profil, afin que ces écritures respectent les règles de sécurité (RLS).
+  const authed = createAuthedClient(authData.session.access_token);
+
+  const { data: account, error: e2 } = await authed.from("accounts")
     .insert({ name: companyName, company_name: companyName })
     .select().single();
   if (e2) throw e2;
@@ -113,12 +118,12 @@ export async function signUpCompany({ companyName, adminName, email, password })
     dashboard: true, bilan: true, revenues: true, expenses: true, inventory: true,
     reservations: true, planning: true, clients: true, drivers: true, settings: true, users: true,
   };
-  const { error: e3 } = await supabase.from("profiles").insert({
+  const { error: e3 } = await authed.from("profiles").insert({
     id: userId, account_id: account.id, name: adminName, permissions: fullPermissions, is_platform_admin: false,
   });
   if (e3) throw e3;
 
-  return { needsEmailConfirmation: !authData.session };
+  return { needsEmailConfirmation: false };
 }
 
 // ============================================================
