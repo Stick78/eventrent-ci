@@ -376,6 +376,21 @@ export async function fetchAllAccounts() {
   return data.map(mapAccount);
 }
 
+export async function fetchAllUsers() {
+  const { data, error } = await supabase.rpc("list_all_users");
+  if (error) throw error;
+  return data.map((u) => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    companyName: u.company_name || "— (super-admin)",
+    accountStatus: u.subscription_status,
+    isPlatformAdmin: !!u.is_platform_admin,
+    permissions: u.permissions || {},
+    createdAt: u.created_at ? u.created_at.slice(0, 10) : null,
+  }));
+}
+
 export async function updateAccountStatus(accountId, { status, trialEnd }) {
   const row = {};
   if (status) row.subscription_status = status;
