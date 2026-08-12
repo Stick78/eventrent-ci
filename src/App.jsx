@@ -173,7 +173,9 @@ function generateQuotePDF(r, data) {
 export default function App() {
   const [session, setSession] = useState(undefined); // undefined = pas encore vérifié, null = pas connecté
   const [profile, setProfile] = useState(null);
+  const [account, setAccount] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [showSignup, setShowSignup] = useState(false);
 
   useEffect(() => {
     let sub;
@@ -187,22 +189,31 @@ export default function App() {
 
   useEffect(() => {
     if (session === undefined) return;
-    if (!session) { setProfile(null); return; }
+    if (!session) { setProfile(null); setAccount(null); return; }
     db.fetchProfile(session.user.id)
-      .then(setProfile)
+      .then(async (p) => {
+        setProfile(p);
+        if (!p.isPlatformAdmin && p.accountId) {
+          const acc = await db.fetchAccount(p.accountId);
+          setAccount(acc);
+        }
+      })
       .catch((e) => { console.error(e); setLoadError("Impossible de charger ton profil. Contacte le support."); });
   }, [session]);
 
   const handleLogout = async () => {
     await db.signOut();
     setProfile(null);
+    setAccount(null);
   };
 
   if (session === undefined) {
     return <FullScreenLoader />;
   }
   if (!session) {
-    return <LoginScreen />;
+    return showSignup
+      ? <SignupScreen onBackToLogin={() => setShowSignup(false)} />
+      : <LoginScreen onShowSignup={() => setShowSignup(true)} />;
   }
   if (loadError) {
     return <FullScreenMessage title="Erreur" message={loadError} onLogout={handleLogout} />;
@@ -213,10 +224,17 @@ export default function App() {
   if (profile.isPlatformAdmin) {
     return <PlatformAdminApp profile={profile} onLogout={handleLogout} />;
   }
-  if (!profile.accountId) {
+  if (!profile.accountId || !account) {
     return <FullScreenMessage title="Compte non configuré" message="Ton profil n'est rattaché à aucune entreprise. Contacte le support." onLogout={handleLogout} />;
   }
-  return <TenantApp profile={profile} onLogout={handleLogout} />;
+
+  const daysLeft = Math.ceil((new Date(account.trialEnd) - new Date()) / (1000 * 60 * 60 * 24));
+  const isBlocked = account.status === "cancelled" || account.status === "expired" || (account.status === "trial" && daysLeft < 0);
+  if (isBlocked) {
+    return <TrialExpiredScreen account={account} onLogout={handleLogout} />;
+  }
+
+  return <TenantApp profile={profile} account={account} daysLeft={daysLeft} onLogout={handleLogout} />;
 }
 
 function FullScreenLoader() {
@@ -235,7 +253,7 @@ function FullScreenMessage({ title, message, onLogout }) {
 }
 
 // ---------- Connexion (Supabase Auth) ----------
-function LoginScreen() {
+function LoginScreen({ onShowSignup }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -268,6 +286,78 @@ function LoginScreen() {
       </Field>
       {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
       <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
+        Nouvelle entreprise ? <span onClick={onShowSignup} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Créer mon compte</span>
+      </div>
+    </div>
+  </div>;
+}
+
+// ---------- Inscription (essai gratuit 14 jours) ----------
+function SignupScreen({ onBackToLogin }) {
+  const [companyName, setCompanyName] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(null); // { needsEmailConfirmation }
+
+  const submit = async () => {
+    if (!companyName || !adminName || !email || !password) return;
+    if (password.length < 6) { setError("Le mot de passe doit contenir au moins 6 caractères."); return; }
+    setError(""); setLoading(true);
+    try {
+      const result = await db.signUpCompany({ companyName, adminName, email: email.trim(), password });
+      setDone(result);
+    } catch (e) {
+      console.error(e);
+      setError(e.message?.includes("already registered") ? "Cet email est déjà utilisé." : "Erreur lors de l'inscription. Réessaie.");
+    } finally { setLoading(false); }
+  };
+
+  if (done) {
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+      <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 340, textAlign: "center" }}>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>🎉</div>
+        <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>Ton essai gratuit de 14 jours a démarré !</div>
+        {done.needsEmailConfirmation
+          ? <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 16 }}>Vérifie ta boîte mail pour confirmer ton adresse, puis reviens te connecter.</div>
+          : <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 16 }}>Tu peux te connecter dès maintenant.</div>}
+        <Btn onClick={onBackToLogin}>Retour à la connexion</Btn>
+      </div>
+    </div>;
+  }
+
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360 }}>
+      <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Créer mon entreprise</div>
+      <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>14 jours d'essai gratuit, sans engagement</div>
+      <Field label="Nom de l'entreprise"><input style={inputStyle} value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></Field>
+      <Field label="Ton nom"><input style={inputStyle} value={adminName} onChange={(e) => setAdminName(e.target.value)} /></Field>
+      <Field label="Email"><input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+      <Field label="Mot de passe (6 caractères min.)"><input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+      {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+      <Btn disabled={loading} onClick={submit}>{loading ? "Création..." : "Démarrer l'essai gratuit"}</Btn>
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
+        Déjà un compte ? <span onClick={onBackToLogin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Se connecter</span>
+      </div>
+    </div>
+  </div>;
+}
+
+function TrialExpiredScreen({ account, onLogout }) {
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 380, textAlign: "center" }}>
+      <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
+      <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>
+        {account.status === "cancelled" ? "Compte résilié" : "Ton essai gratuit est terminé"}
+      </div>
+      <div style={{ fontSize: 13.5, color: TEXT_MUTED, marginBottom: 20 }}>
+        Pour continuer à utiliser EventRent CI, contacte-nous pour activer ton abonnement.
+      </div>
+      <div style={{ fontSize: 13, marginBottom: 20 }}>📞 Contact : à renseigner</div>
+      <Btn onClick={onLogout} variant="ghost">Se déconnecter</Btn>
     </div>
   </div>;
 }
@@ -275,7 +365,7 @@ function LoginScreen() {
 // ============================================================
 // Application "entreprise cliente" (tout ce qu'on avait déjà)
 // ============================================================
-function TenantApp({ profile, onLogout }) {
+function TenantApp({ profile, account, daysLeft, onLogout }) {
   const [tab, setTab] = useState("reservations");
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -360,6 +450,11 @@ function TenantApp({ profile, onLogout }) {
         </div>
 
         <div style={{ flex: 1, padding: 24, maxWidth: 1100 }}>
+          {account.status === "trial" && (
+            <div style={{ background: daysLeft <= 3 ? "#FBEAE8" : "#FEFAEF", color: daysLeft <= 3 ? "#B3261E" : "#9A6A00", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13, fontWeight: 700 }}>
+              ⏳ Essai gratuit : {daysLeft} jour{daysLeft > 1 ? "s" : ""} restant{daysLeft > 1 ? "s" : ""}
+            </div>
+          )}
           {error && (
             <div style={{ background: "#FBEAE8", color: "#B3261E", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 13.5 }}>
               ⚠ {error}
