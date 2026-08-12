@@ -419,8 +419,10 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
         <div style={{ width: 210, background: NAVY, color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "0 8px 20px 8px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>ER</div>
-              <div style={{ fontWeight: 800, fontSize: 16 }}>EventRent <span style={{ color: "#C9A227" }}>CI</span></div>
+              {data.settings?.logo
+                ? <img src={data.settings.logo} alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: "#fff" }} />
+                : <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>ER</div>}
+              <div style={{ fontWeight: 800, fontSize: 16, lineHeight: 1.2 }}>{data.settings?.companyName || "EventRent CI"}</div>
             </div>
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
@@ -544,8 +546,7 @@ function DailyRevenueChart({ data }) {
 
 // ---------- Dashboard ----------
 function Dashboard({ data }) {
-  const now = new Date();
-  const monthKey = todayISO().slice(0, 7);
+  const now = new Date();  const monthKey = todayISO().slice(0, 7);
   const prevMonthKey = useMemo(() => { const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1); return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`; }, []);
 
   const revenueMonth = useMemo(() => {
@@ -578,7 +579,7 @@ function Dashboard({ data }) {
   }, [data]);
 
   return <div>
-    <PageBanner icon={LayoutDashboard} title="Tableau de bord" subtitle={`EventRent CI · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}`} />
+    <PageBanner icon={LayoutDashboard} title="Tableau de bord" subtitle={`${data.settings?.companyName || "EventRent CI"} · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}`} />
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 14 }}>
       <KpiCard icon={Wallet} label="Revenus du mois" value={fmt(revenueMonth)} color="#2F6FED" />
       <KpiCard icon={CalendarDays} label="Réservations à venir" value={upcoming} color="#7C5CFC" />
