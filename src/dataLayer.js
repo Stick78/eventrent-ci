@@ -104,6 +104,13 @@ export async function signUpCompany({ companyName, adminName, email, password })
   const userId = authData.user?.id;
   if (!userId) throw new Error("Inscription incomplète, réessaie.");
 
+  const needsEmailConfirmation = !authData.session;
+  if (authData.session) {
+    // Déconnexion immédiate : évite que l'app tente de charger le profil
+    // avant qu'il ne soit réellement créé (quelques instants plus bas).
+    await supabase.auth.signOut();
+  }
+
   const { data: account, error: e2 } = await supabase.from("accounts")
     .insert({ name: companyName, company_name: companyName })
     .select().single();
@@ -118,7 +125,7 @@ export async function signUpCompany({ companyName, adminName, email, password })
   });
   if (e3) throw e3;
 
-  return { needsEmailConfirmation: !authData.session };
+  return { needsEmailConfirmation };
 }
 
 // ============================================================
