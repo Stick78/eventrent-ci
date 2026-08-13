@@ -473,8 +473,8 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
           ::-webkit-scrollbar-thumb { background: #D8D4C8; border-radius: 4px; }
         `}</style>
 
-        <div style={{ width: 210, background: NAVY, color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "0 8px 20px 8px" }}>
+        <div style={{ width: 210, background: NAVY, color: "#EFEDE6", padding: "20px 12px", flexShrink: 0, position: "sticky", top: 0, height: "100vh", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+          <div style={{ padding: "0 8px 20px 8px", flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {data.settings?.logo
                 ? <img src={data.settings.logo} alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: "#fff" }} />
@@ -486,7 +486,7 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
             </div>
             <div style={{ fontSize: 11, color: "#9BAFC9", marginTop: 6 }}>Connecté à Supabase</div>
           </div>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: "1 0 auto" }}>
             {nav.map((n) => {
               const Icon = n.icon; const active = tab === n.id;
               return (
