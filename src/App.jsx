@@ -175,7 +175,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [account, setAccount] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [showSignup, setShowSignup] = useState(false);
+  const [authMode, setAuthMode] = useState("login"); // "login" | "signup" | "join"
 
   useEffect(() => {
     let sub;
@@ -211,9 +211,9 @@ export default function App() {
     return <FullScreenLoader />;
   }
   if (!session) {
-    return showSignup
-      ? <SignupScreen onBackToLogin={() => setShowSignup(false)} />
-      : <LoginScreen onShowSignup={() => setShowSignup(true)} />;
+    if (authMode === "signup") return <SignupScreen onBackToLogin={() => setAuthMode("login")} />;
+    if (authMode === "join") return <JoinScreen onBackToLogin={() => setAuthMode("login")} />;
+    return <LoginScreen onShowSignup={() => setAuthMode("signup")} onShowJoin={() => setAuthMode("join")} />;
   }
   if (loadError) {
     return <FullScreenMessage title="Erreur" message={loadError} onLogout={handleLogout} />;
@@ -251,7 +251,7 @@ function FullScreenMessage({ title, message, onLogout }) {
 }
 
 // ---------- Connexion (Supabase Auth) ----------
-function LoginScreen({ onShowSignup }) {
+function LoginScreen({ onShowSignup, onShowJoin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -286,6 +286,9 @@ function LoginScreen({ onShowSignup }) {
       <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
       <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
         Nouvelle entreprise ? <span onClick={onShowSignup} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Créer mon compte</span>
+      </div>
+      <div style={{ textAlign: "center", marginTop: 8, fontSize: 12.5, color: TEXT_MUTED }}>
+        Un code d'invitation ? <span onClick={onShowJoin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Rejoindre une entreprise</span>
       </div>
     </div>
   </div>;
@@ -339,6 +342,60 @@ function SignupScreen({ onBackToLogin }) {
       <Btn disabled={loading} onClick={submit}>{loading ? "Création..." : "Démarrer l'essai gratuit"}</Btn>
       <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
         Déjà un compte ? <span onClick={onBackToLogin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Se connecter</span>
+      </div>
+    </div>
+  </div>;
+}
+
+// ---------- Rejoindre une entreprise existante (avec code d'invitation) ----------
+function JoinScreen({ onBackToLogin }) {
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const submit = async () => {
+    if (!code || !name || !email || !password) return;
+    if (password.length < 6) { setError("Le mot de passe doit contenir au moins 6 caractères."); return; }
+    setError(""); setLoading(true);
+    try {
+      await db.joinCompanyWithInvite({ code, name, email: email.trim(), password });
+      setDone(true);
+    } catch (e) {
+      console.error(e);
+      const msg = e.message?.includes("already registered") ? "Cet email est déjà utilisé."
+        : e.message?.includes("invalide ou expiré") ? "Code d'invitation invalide ou expiré."
+        : "Erreur lors de l'inscription. Vérifie le code et réessaie.";
+      setError(msg);
+    } finally { setLoading(false); }
+  };
+
+  if (done) {
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+      <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 340, textAlign: "center" }}>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>🎉</div>
+        <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>Bienvenue dans l'équipe !</div>
+        <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 16 }}>Tu peux te connecter dès maintenant.</div>
+        <Btn onClick={onBackToLogin}>Retour à la connexion</Btn>
+      </div>
+    </div>;
+  }
+
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360 }}>
+      <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Rejoindre une entreprise</div>
+      <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Utilise le code fourni par ton administrateur</div>
+      <Field label="Code d'invitation"><input style={{ ...inputStyle, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={6} placeholder="EX: AB12CD" /></Field>
+      <Field label="Ton nom"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" name="join-name" /></Field>
+      <Field label="Email"><input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" name="join-email" /></Field>
+      <Field label="Mot de passe (6 caractères min.)"><input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" name="join-password" /></Field>
+      {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+      <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Rejoindre l'entreprise"}</Btn>
+      <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
+        <span onClick={onBackToLogin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Retour à la connexion</span>
       </div>
     </div>
   </div>;
@@ -1314,14 +1371,25 @@ function SettingsPage({ data, run, busy }) {
 function TeamPage({ data, run, profile }) {
   const accountId = useAccountId();
   const [modal, setModal] = useState(null);
+  const [inviteModal, setInviteModal] = useState(false);
+  const [invites, setInvites] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const refreshInvites = useCallback(() => {
+    db.fetchInvites(accountId).then(setInvites);
+  }, [accountId]);
+  useEffect(() => { refreshInvites(); }, [refreshInvites]);
+
+  const removeInvite = (id) => {
+    setBusy(true);
+    db.deleteInvite(id, accountId).then(refreshInvites).finally(() => setBusy(false));
+  };
+
   return <div>
     <PageBanner icon={UserCog} title="Équipe" subtitle="Membres et droits d'accès de ton entreprise" />
-    <Card style={{ marginBottom: 16, background: "#FEFAEF", borderColor: "#F0DCA0" }}>
-      <div style={{ fontSize: 12.5, color: "#9A6A00" }}>
-        Pour ajouter un nouveau membre, il doit d'abord créer son propre compte via la page d'inscription (bientôt disponible). Tu pourras ensuite lui attribuer ses droits ici.
-      </div>
-    </Card>
-    <div style={{ display: "grid", gap: 10 }}>
+    <SectionTitle action={<Btn icon={Plus} onClick={() => setInviteModal(true)}>Inviter un membre</Btn>}>&nbsp;</SectionTitle>
+
+    <div style={{ display: "grid", gap: 10, marginBottom: 20 }}>
       {data.users.map((u) => <Card key={u.id}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
@@ -1330,13 +1398,82 @@ function TeamPage({ data, run, profile }) {
               Accès : {MODULES.filter((m) => u.permissions?.[m.id]).map((m) => m.label).join(", ") || "Aucun"}
             </div>
           </div>
-          <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(u)} />
+          <div style={{ display: "flex", gap: 10 }}>
+            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(u)} />
+            {u.id !== profile.id && <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => {
+              if (confirm(`Retirer ${u.name} de l'équipe ? Cette personne perdra immédiatement l'accès à l'application.`)) {
+                run(() => db.deleteTeamMember(u.id, accountId));
+              }
+            }} />}
+          </div>
         </div>
       </Card>)}
     </div>
+
+    <div style={{ fontWeight: 800, marginBottom: 10 }}>Invitations en attente</div>
+    <div style={{ display: "grid", gap: 8 }}>
+      {invites === null && <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>Chargement...</div>}
+      {invites?.filter((i) => !i.used).map((i) => <Card key={i.id}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: 2 }}>{i.code}</div>
+            <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 2 }}>
+              Accès prévu : {MODULES.filter((m) => i.permissions?.[m.id]).map((m) => m.label).join(", ") || "Aucun"}
+            </div>
+          </div>
+          <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => removeInvite(i.id)} />
+        </div>
+      </Card>)}
+      {invites?.filter((i) => !i.used).length === 0 && <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>Aucune invitation en attente.</div>}
+    </div>
+
     {modal && <TeamMemberModal member={modal} onClose={() => setModal(null)} run={run} />}
+    {inviteModal && <InviteModal onClose={() => setInviteModal(false)} onCreated={refreshInvites} />}
   </div>;
 }
+
+function InviteModal({ onClose, onCreated }) {
+  const accountId = useAccountId();
+  const defaultPerms = { dashboard: false, bilan: false, revenues: false, expenses: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
+  const [permissions, setPermissions] = useState(defaultPerms);
+  const [saving, setSaving] = useState(false);
+  const [generated, setGenerated] = useState(null);
+  const togglePerm = (id) => setPermissions((p) => ({ ...p, [id]: !p[id] }));
+
+  const generate = async () => {
+    setSaving(true);
+    try {
+      const invite = await db.createInvite(accountId, permissions);
+      setGenerated(invite.code);
+      onCreated();
+    } finally { setSaving(false); }
+  };
+
+  if (generated) {
+    return <Modal title="Invitation créée" onClose={onClose}>
+      <div style={{ textAlign: "center", padding: "10px 0" }}>
+        <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 10 }}>Partage ce code à la personne que tu invites :</div>
+        <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 6, background: "#F1F2F6", borderRadius: 10, padding: "16px 0", marginBottom: 14 }}>{generated}</div>
+        <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 16 }}>Valable 7 jours. Elle devra aller sur l'écran de connexion → "Rejoindre une entreprise" et saisir ce code.</div>
+        <Btn onClick={onClose}>Terminé</Btn>
+      </div>
+    </Modal>;
+  }
+
+  return <Modal title="Inviter un membre" onClose={onClose}>
+    <Field label="Modules accessibles pour cette personne">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        {MODULES.map((m) => (
+          <label key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={!!permissions[m.id]} onChange={() => togglePerm(m.id)} /> {m.label}
+          </label>
+        ))}
+      </div>
+    </Field>
+    <Btn disabled={saving} onClick={generate}>{saving ? "Génération..." : "Générer le code d'invitation"}</Btn>
+  </Modal>;
+}
+
 function TeamMemberModal({ member, onClose, run }) {
   const accountId = useAccountId();
   const [name, setName] = useState(member.name);
