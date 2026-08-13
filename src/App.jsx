@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, ShieldCheck
+  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, ShieldCheck, BookOpen
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -43,6 +43,7 @@ const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
 const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const reservationTotal = (r) => r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
 const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const GUIDE_PDF_URL = "/guide-utilisation-eventrent-ci.pdf";
 
 // Contexte : rend l'accountId courant accessible à tous les composants sans prop drilling
 const AccountContext = createContext(null);
@@ -251,6 +252,14 @@ function FullScreenMessage({ title, message, onLogout }) {
 }
 
 // ---------- Connexion (Supabase Auth) ----------
+function GuideLink() {
+  return <div style={{ textAlign: "center", marginTop: 16 }}>
+    <a href={GUIDE_PDF_URL} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", textDecoration: "none" }}>
+      <BookOpen size={13} /> Consulter le guide d'utilisation (PDF)
+    </a>
+  </div>;
+}
+
 function LoginScreen({ onShowSignup, onShowJoin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -291,6 +300,7 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
         Un code d'invitation ? <span onClick={onShowJoin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Rejoindre une entreprise</span>
       </div>
     </div>
+    <GuideLink />
   </div>;
 }
 
@@ -344,6 +354,7 @@ function SignupScreen({ onBackToLogin }) {
         Déjà un compte ? <span onClick={onBackToLogin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Se connecter</span>
       </div>
     </div>
+    <GuideLink />
   </div>;
 }
 
@@ -398,6 +409,7 @@ function JoinScreen({ onBackToLogin }) {
         <span onClick={onBackToLogin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Retour à la connexion</span>
       </div>
     </div>
+    <GuideLink />
   </div>;
 }
 
@@ -501,7 +513,10 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
             })}
           </div>
           <div style={{ borderTop: "1px solid #24304F", paddingTop: 12, marginTop: 12 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{profile.name}</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>{profile.name}</div>
+            <a href={GUIDE_PDF_URL} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", textDecoration: "none", marginBottom: 8 }}>
+              <BookOpen size={13} /> Aide (guide PDF)
+            </a>
             <div onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", cursor: "pointer" }}>
               <LogOut size={13} /> Déconnexion
             </div>
