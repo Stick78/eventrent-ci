@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, ShieldCheck, BookOpen
+  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, ShieldCheck, BookOpen, Store
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -32,6 +32,7 @@ const MODULES = [
   { id: "drivers", label: "Livreurs", icon: Truck },
   { id: "settings", label: "Paramètres", icon: SettingsIcon },
   { id: "users", label: "Équipe", icon: UserCog },
+  { id: "stores", label: "Magasins", icon: Store },
 ];
 const NAVY = "#0F1B3D";
 const BG = "#F5F6FA";
@@ -74,6 +75,10 @@ const GUIDE_PDF_URL = "/guide-utilisation-eventrent-ci.pdf";
 // Contexte : rend l'accountId courant accessible à tous les composants sans prop drilling
 const AccountContext = createContext(null);
 const useAccountId = () => useContext(AccountContext);
+
+// Contexte : rend le magasin actuellement sélectionné accessible partout
+const StoreContext = createContext(null);
+const useStoreId = () => useContext(StoreContext);
 
 // ---------- Génération du devis PDF (personnalisable) ----------
 function generateQuotePDF(r, data) {
@@ -568,26 +573,48 @@ function TrialExpiredScreen({ account, onLogout }) {
 // ============================================================
 function TenantApp({ profile, account, daysLeft, onLogout }) {
   const [tab, setTab] = useState("reservations");
+  const [stores, setStores] = useState(null);
+  const [currentStoreId, setCurrentStoreId] = useState(profile.storeId || null);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  const refreshStores = useCallback(async () => {
+    const list = await db.fetchStores(profile.accountId);
+    setStores(list);
+    if (!profile.storeId) {
+      setCurrentStoreId((cur) => (cur && list.some((s) => s.id === cur)) ? cur : (list[0]?.id || null));
+    } else {
+      setCurrentStoreId(profile.storeId);
+    }
+  }, [profile.accountId, profile.storeId]);
+
+  useEffect(() => { refreshStores(); }, [refreshStores]);
+
   const refresh = useCallback(async () => {
+    if (!currentStoreId) return;
     try {
-      const d = await db.fetchAll(profile.accountId);
+      const d = await db.fetchAll(profile.accountId, currentStoreId);
       setData(d);
       setError(null);
     } catch (e) {
       console.error(e);
       setError(e.message || "Erreur de connexion à la base");
     }
-  }, [profile.accountId]);
+  }, [profile.accountId, currentStoreId]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
   const run = async (fn) => {
     setBusy(true);
     try { await fn(); await refresh(); }
+    catch (e) { console.error(e); setError(e.message || "Une erreur est survenue"); }
+    finally { setBusy(false); }
+  };
+
+  const runStores = async (fn) => {
+    setBusy(true);
+    try { await fn(); await refreshStores(); }
     catch (e) { console.error(e); setError(e.message || "Une erreur est survenue"); }
     finally { setBusy(false); }
   };
@@ -600,14 +627,16 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
 
-  if (!data) return <FullScreenLoader />;
+  if (!stores || !currentStoreId || !data) return <FullScreenLoader />;
 
   const nav = MODULES.filter((m) => profile.permissions?.[m.id]);
   const hasAccess = (id) => !!profile.permissions?.[id];
   const isAdmin = !!profile.permissions?.users;
+  const currentStore = stores.find((s) => s.id === currentStoreId);
 
   return (
     <AccountContext.Provider value={profile.accountId}>
+    <StoreContext.Provider value={currentStoreId}>
       <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", background: BG, minHeight: "100vh", color: TEXT_DARK, display: "flex" }}>
         <style>{`
           * { box-sizing: border-box; }
@@ -628,6 +657,17 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               {isAdmin && <Badge text="ADMIN" bg="rgba(255,255,255,0.15)" fg="#fff" />}
             </div>
+            {profile.storeId || stores.length <= 1 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "#9BAFC9", marginTop: 8 }}>
+                <Store size={12} /> {currentStore?.name || "Magasin"}
+              </div>
+            ) : (
+              <div style={{ marginTop: 8 }}>
+                <select value={currentStoreId} onChange={(e) => setCurrentStoreId(e.target.value)} style={{ width: "100%", background: "#1A2A45", color: "#fff", border: "1px solid #2A3A5A", borderRadius: 6, padding: "5px 6px", fontSize: 11.5 }}>
+                  {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
             <div style={{ fontSize: 11, color: "#9BAFC9", marginTop: 6 }}>Connecté à Supabase</div>
           </div>
           <div style={{ flex: "1 0 auto" }}>
@@ -676,10 +716,12 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
           {tab === "clients" && hasAccess("clients") && <Clients data={data} run={run} />}
           {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
           {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
-          {tab === "users" && hasAccess("users") && <TeamPage data={data} run={run} profile={profile} />}
+          {tab === "users" && hasAccess("users") && <TeamPage data={data} run={run} profile={profile} stores={stores} />}
+          {tab === "stores" && hasAccess("stores") && <StoresPage stores={stores} run={runStores} busy={busy} currentStoreId={currentStoreId} />}
           {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
         </div>
       </div>
+    </StoreContext.Provider>
     </AccountContext.Provider>
   );
 }
@@ -940,6 +982,7 @@ function Recettes({ data, run, busy }) {
 
 function RevenueModal({ onClose, run }) {
   const accountId = useAccountId();
+  const storeId = useStoreId();
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Autre");
@@ -948,7 +991,7 @@ function RevenueModal({ onClose, run }) {
   const save = async () => {
     if (!description || !amount) return;
     setSaving(true);
-    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date }, accountId)); onClose(); }
+    try { await run(() => db.createAdditionalRevenue({ description, amount: +amount, category, date }, accountId, storeId)); onClose(); }
     finally { setSaving(false); }
   };
   return <Modal title="Ajouter une recette" onClose={onClose}>
@@ -1006,6 +1049,7 @@ function Depenses({ data, run, busy }) {
 
 function ExpenseModal({ onClose, run }) {
   const accountId = useAccountId();
+  const storeId = useStoreId();
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Autre");
@@ -1014,7 +1058,7 @@ function ExpenseModal({ onClose, run }) {
   const save = async () => {
     if (!description || !amount) return;
     setSaving(true);
-    try { await run(() => db.createExpense({ description, amount: +amount, category, date }, accountId)); onClose(); }
+    try { await run(() => db.createExpense({ description, amount: +amount, category, date }, accountId, storeId)); onClose(); }
     finally { setSaving(false); }
   };
   return <Modal title="Ajouter une dépense" onClose={onClose}>
@@ -1031,6 +1075,7 @@ function ExpenseModal({ onClose, run }) {
 // ---------- Inventory ----------
 function Inventory({ data, run, busy }) {
   const accountId = useAccountId();
+  const storeId = useStoreId();
   const [modal, setModal] = useState(null);
   const [checkDate, setCheckDate] = useState(todayISO());
   const availability = (item) => {
@@ -1038,7 +1083,7 @@ function Inventory({ data, run, busy }) {
       .reduce((s, r) => s + (r.items.find((it) => it.itemId === item.id)?.qty || 0), 0);
     return item.total - rented;
   };
-  const save = (item) => run(() => db.saveInventoryItem(item, accountId)).then(() => setModal(null));
+  const save = (item) => run(() => db.saveInventoryItem(item, accountId, storeId)).then(() => setModal(null));
   const remove = (id) => { if (confirm("Supprimer cet article ?")) run(() => db.deleteInventoryItem(id, accountId)); };
 
   return <div>
@@ -1147,6 +1192,7 @@ function DiscountInput({ type, value, onChange, small }) {
 
 function NewReservationModal({ data, run, onClose }) {
   const accountId = useAccountId();
+  const storeId = useStoreId();
   const [clientMode, setClientMode] = useState("existing");
   const [clientId, setClientId] = useState(data.clients[0]?.id || "");
   const [newClient, setNewClient] = useState({ name: "", phone: "" });
@@ -1187,7 +1233,7 @@ function NewReservationModal({ data, run, onClose }) {
         return { itemId, qty: s.qty, unit: inv.unit, discountType: s.discountType || null, discountValue: s.discountType ? (+s.discountValue || 0) : 0 };
       });
       if (items.length === 0 || !start || !end) { setSaving(false); return; }
-      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode, discountType, discountValue: discountType ? (+discountValue || 0) : 0 }, accountId));
+      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode, discountType, discountValue: discountType ? (+discountValue || 0) : 0 }, accountId, storeId));
       onClose();
     } finally { setSaving(false); }
   };
@@ -1573,8 +1619,65 @@ function SettingsPage({ data, run, busy }) {
   </div>;
 }
 
+// ---------- Magasins ----------
+function StoresPage({ stores, run, busy, currentStoreId }) {
+  const accountId = useAccountId();
+  const [modal, setModal] = useState(null);
+
+  const remove = (store) => {
+    if (stores.length <= 1) { alert("Impossible de supprimer le dernier magasin de l'entreprise."); return; }
+    if (!confirm(`Supprimer le magasin "${store.name}" ? Cette action est irréversible.`)) return;
+    run(() => db.deleteStore(store.id, accountId)).catch(() => {
+      alert("Impossible de supprimer ce magasin : il contient encore de l'inventaire ou des réservations. Vide-le d'abord.");
+    });
+  };
+
+  return <div>
+    <PageBanner icon={Store} title="Magasins" subtitle="Chaque magasin a son propre inventaire et ses propres réservations" />
+    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un magasin</Btn>}>&nbsp;</SectionTitle>
+    <div style={{ display: "grid", gap: 10 }}>
+      {stores.map((s) => <Card key={s.id}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+              {s.name} {s.id === currentStoreId && <Badge text="Actif" bg="#DFF0E8" fg="#1F6F4B" />}
+            </div>
+            {s.address && <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginTop: 3 }}>{s.address}</div>}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Pencil size={15} style={{ cursor: "pointer", color: "#5B564C" }} onClick={() => setModal(s)} />
+            <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => remove(s)} />
+          </div>
+        </div>
+      </Card>)}
+    </div>
+    {modal !== null && <StoreModal store={modal} onClose={() => setModal(null)} run={run} />}
+  </div>;
+}
+
+function StoreModal({ store, onClose, run }) {
+  const accountId = useAccountId();
+  const [name, setName] = useState(store.name || "");
+  const [address, setAddress] = useState(store.address || "");
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!name) return;
+    setSaving(true);
+    try {
+      if (store.id) await run(() => db.updateStore(store.id, name, address, accountId));
+      else await run(() => db.createStore(accountId, name, address));
+      onClose();
+    } finally { setSaving(false); }
+  };
+  return <Modal title={store.id ? "Modifier le magasin" : "Nouveau magasin"} onClose={onClose}>
+    <Field label="Nom du magasin"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Magasin Cocody" /></Field>
+    <Field label="Adresse (optionnel)"><input style={inputStyle} value={address} onChange={(e) => setAddress(e.target.value)} /></Field>
+    <Btn disabled={saving} onClick={save}>{saving ? "Enregistrement..." : "Enregistrer"}</Btn>
+  </Modal>;
+}
+
 // ---------- Équipe ----------
-function TeamPage({ data, run, profile }) {
+function TeamPage({ data, run, profile, stores }) {
   const accountId = useAccountId();
   const [modal, setModal] = useState(null);
   const [inviteModal, setInviteModal] = useState(false);
@@ -1591,6 +1694,8 @@ function TeamPage({ data, run, profile }) {
     db.deleteInvite(id, accountId).then(refreshInvites).finally(() => setBusy(false));
   };
 
+  const storeName = (id) => stores.find((s) => s.id === id)?.name;
+
   return <div>
     <PageBanner icon={UserCog} title="Équipe" subtitle="Membres et droits d'accès de ton entreprise" />
     <SectionTitle action={<Btn icon={Plus} onClick={() => setInviteModal(true)}>Inviter un membre</Btn>}>&nbsp;</SectionTitle>
@@ -1602,6 +1707,9 @@ function TeamPage({ data, run, profile }) {
             <div style={{ fontWeight: 800 }}>{u.name} {u.id === profile.id && <Badge text="Toi" bg="#DCEAFB" fg="#1D5FA8" />}</div>
             <div style={{ fontSize: 11.5, color: "#8A857A", marginTop: 4 }}>
               Accès : {MODULES.filter((m) => u.permissions?.[m.id]).map((m) => m.label).join(", ") || "Aucun"}
+            </div>
+            <div style={{ fontSize: 11.5, color: "#8A857A", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+              <Store size={11} /> {u.storeId ? (storeName(u.storeId) || "Magasin supprimé") : "Tous les magasins"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
@@ -1626,6 +1734,9 @@ function TeamPage({ data, run, profile }) {
             <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 2 }}>
               Accès prévu : {MODULES.filter((m) => i.permissions?.[m.id]).map((m) => m.label).join(", ") || "Aucun"}
             </div>
+            <div style={{ fontSize: 11.5, color: TEXT_MUTED, marginTop: 2 }}>
+              Magasin : {i.storeId ? (storeName(i.storeId) || "Magasin supprimé") : "Tous les magasins"}
+            </div>
           </div>
           <Trash2 size={15} style={{ cursor: "pointer", color: "#B3261E" }} onClick={() => removeInvite(i.id)} />
         </div>
@@ -1633,15 +1744,16 @@ function TeamPage({ data, run, profile }) {
       {invites?.filter((i) => !i.used).length === 0 && <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>Aucune invitation en attente.</div>}
     </div>
 
-    {modal && <TeamMemberModal member={modal} onClose={() => setModal(null)} run={run} />}
-    {inviteModal && <InviteModal onClose={() => setInviteModal(false)} onCreated={refreshInvites} />}
+    {modal && <TeamMemberModal member={modal} onClose={() => setModal(null)} run={run} stores={stores} />}
+    {inviteModal && <InviteModal onClose={() => setInviteModal(false)} onCreated={refreshInvites} stores={stores} />}
   </div>;
 }
 
-function InviteModal({ onClose, onCreated }) {
+function InviteModal({ onClose, onCreated, stores }) {
   const accountId = useAccountId();
-  const defaultPerms = { dashboard: false, bilan: false, revenues: false, expenses: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false };
+  const defaultPerms = { dashboard: false, bilan: false, revenues: false, expenses: false, inventory: true, reservations: true, planning: true, clients: true, drivers: true, settings: false, users: false, stores: false };
   const [permissions, setPermissions] = useState(defaultPerms);
+  const [storeId, setStoreId] = useState("");
   const [saving, setSaving] = useState(false);
   const [generated, setGenerated] = useState(null);
   const togglePerm = (id) => setPermissions((p) => ({ ...p, [id]: !p[id] }));
@@ -1649,7 +1761,7 @@ function InviteModal({ onClose, onCreated }) {
   const generate = async () => {
     setSaving(true);
     try {
-      const invite = await db.createInvite(accountId, permissions);
+      const invite = await db.createInvite(accountId, permissions, storeId || null);
       setGenerated(invite.code);
       onCreated();
     } finally { setSaving(false); }
@@ -1667,6 +1779,12 @@ function InviteModal({ onClose, onCreated }) {
   }
 
   return <Modal title="Inviter un membre" onClose={onClose}>
+    {stores.length > 1 && <Field label="Restreindre à un magasin (optionnel)">
+      <select style={inputStyle} value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+        <option value="">Tous les magasins</option>
+        {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+    </Field>}
     <Field label="Modules accessibles pour cette personne">
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
         {MODULES.map((m) => (
@@ -1680,10 +1798,11 @@ function InviteModal({ onClose, onCreated }) {
   </Modal>;
 }
 
-function TeamMemberModal({ member, onClose, run }) {
+function TeamMemberModal({ member, onClose, run, stores }) {
   const accountId = useAccountId();
   const [name, setName] = useState(member.name);
   const [permissions, setPermissions] = useState({ ...member.permissions });
+  const [storeId, setStoreId] = useState(member.storeId || "");
   const [saving, setSaving] = useState(false);
   const togglePerm = (id) => setPermissions((p) => ({ ...p, [id]: !p[id] }));
   const save = async () => {
@@ -1692,12 +1811,19 @@ function TeamMemberModal({ member, onClose, run }) {
       await run(async () => {
         await db.updateTeamMemberName(member.id, name, accountId);
         await db.updateTeamMemberPermissions(member.id, permissions, accountId);
+        await db.updateTeamMemberStore(member.id, storeId || null, accountId);
       });
       onClose();
     } finally { setSaving(false); }
   };
   return <Modal title="Modifier le membre" onClose={onClose}>
     <Field label="Nom complet"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+    {stores.length > 1 && <Field label="Magasin">
+      <select style={inputStyle} value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+        <option value="">Tous les magasins</option>
+        {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+    </Field>}
     <Field label="Modules accessibles">
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
         {MODULES.map((m) => (
