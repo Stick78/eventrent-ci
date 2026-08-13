@@ -41,7 +41,29 @@ const TEXT_DARK = "#111827";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
 const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
-const reservationTotal = (r) => r.items.reduce((s, it) => s + it.qty * it.unit, 0) * (r.seasonal ? 1.2 : 1) + (ZONES.find((z) => z.id === r.zone)?.fee || 0);
+const applyDiscount = (amount, type, value) => {
+  if (!type || !value) return amount;
+  if (type === "percent") return Math.max(amount - (amount * value) / 100, 0);
+  if (type === "amount") return Math.max(amount - value, 0);
+  return amount;
+};
+const discountLabel = (type, value) => {
+  if (!type || !value) return "";
+  return type === "percent" ? `-${value}%` : `-${fmt(value)}`;
+};
+const reservationBreakdown = (r) => {
+  const rawSubtotal = r.items.reduce((s, it) => s + it.qty * it.unit, 0);
+  const itemsAfterDiscount = r.items.reduce((s, it) => s + applyDiscount(it.qty * it.unit, it.discountType, it.discountValue), 0);
+  const itemDiscountTotal = rawSubtotal - itemsAfterDiscount;
+  const seasonalFee = r.seasonal ? itemsAfterDiscount * 0.2 : 0;
+  const afterSeasonal = itemsAfterDiscount + seasonalFee;
+  const afterGlobalDiscount = applyDiscount(afterSeasonal, r.discountType, r.discountValue);
+  const globalDiscountAmount = afterSeasonal - afterGlobalDiscount;
+  const zoneFee = ZONES.find((z) => z.id === r.zone)?.fee || 0;
+  const total = afterGlobalDiscount + zoneFee;
+  return { rawSubtotal, itemsAfterDiscount, itemDiscountTotal, seasonalFee, globalDiscountAmount, zoneFee, total };
+};
+const reservationTotal = (r) => reservationBreakdown(r).total;
 const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const GUIDE_PDF_URL = "/guide-utilisation-eventrent-ci.pdf";
 
@@ -57,10 +79,8 @@ function generateQuotePDF(r, data) {
   const settings = data.settings || { companyName: "Mon entreprise", phone: "", footerText: "", logo: null };
   const zone = ZONES.find((z) => z.id === r.zone);
   const driver = data.drivers.find((d) => d.id === r.driverId);
-  const subtotal = r.items.reduce((s, it) => s + it.qty * it.unit, 0);
-  const seasonalFee = r.seasonal ? subtotal * 0.2 : 0;
-  const zoneFee = zone?.fee || 0;
-  const total = subtotal + seasonalFee + zoneFee;
+  const bd = reservationBreakdown(r);
+  const { total } = bd;
   const paid = r.payments.reduce((s, p) => s + p.amount, 0);
   const remaining = Math.max(total - paid, 0);
   const docNumber = `DEV-${r.id.toString().slice(0, 8).toUpperCase()}`;
@@ -125,15 +145,19 @@ function generateQuotePDF(r, data) {
   doc.setFont(undefined, "normal");
   doc.text(driver ? `${driver.name} (${driver.type === "externe" ? "freelance" : "interne"})` : "Non assigné", 110, y + 6);
 
-  const rows = r.items.map((it) => [it.name, String(it.qty), fmt(it.unit), fmt(it.qty * it.unit)]);
+  const rows = r.items.map((it) => {
+    const lineRaw = it.qty * it.unit;
+    const lineAfter = applyDiscount(lineRaw, it.discountType, it.discountValue);
+    return [it.name, String(it.qty), fmt(it.unit), discountLabel(it.discountType, it.discountValue) || "—", fmt(lineAfter)];
+  });
   doc.autoTable({
     startY: y + 20,
-    head: [["Article", "Qté", "Prix unitaire", "Sous-total"]],
+    head: [["Article", "Qté", "Prix unitaire", "Remise", "Sous-total"]],
     body: rows,
     theme: "grid",
     headStyles: { fillColor: [31, 111, 75], textColor: 255, fontStyle: "bold" },
     styles: { fontSize: 9, cellPadding: 3 },
-    columnStyles: { 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" } },
+    columnStyles: { 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "center" }, 4: { halign: "right" } },
   });
 
   let finalY = doc.lastAutoTable.finalY + 8;
@@ -144,9 +168,11 @@ function generateQuotePDF(r, data) {
     doc.text(value, 196, finalY, { align: "right" });
     finalY += bold ? 8 : 6;
   };
-  totalsLine("Sous-total articles", fmt(subtotal), false);
-  if (r.seasonal) totalsLine("Majoration haute saison (+20%)", fmt(seasonalFee), false);
-  if (zoneFee > 0) totalsLine("Frais de livraison", fmt(zoneFee), false);
+  totalsLine("Sous-total articles (avant remise)", fmt(bd.rawSubtotal), false);
+  if (bd.itemDiscountTotal > 0) totalsLine("Remises sur articles", `-${fmt(bd.itemDiscountTotal)}`, false);
+  if (r.seasonal) totalsLine("Majoration haute saison (+20%)", fmt(bd.seasonalFee), false);
+  if (bd.globalDiscountAmount > 0) totalsLine(`Remise globale (${discountLabel(r.discountType, r.discountValue)})`, `-${fmt(bd.globalDiscountAmount)}`, false);
+  if (bd.zoneFee > 0) totalsLine("Frais de livraison", fmt(bd.zoneFee), false);
   doc.setDrawColor(220, 220, 220);
   doc.line(140, finalY - 2, 196, finalY - 2);
   totalsLine("TOTAL", fmt(total), true);
@@ -1100,6 +1126,21 @@ function Reservations({ data, run, busy }) {
   </div>;
 }
 
+function DiscountInput({ type, value, onChange, small }) {
+  const w1 = small ? 62 : 90;
+  const w2 = small ? 58 : 80;
+  const pad = small ? "4px 4px" : "8px 6px";
+  const fs = small ? 11 : 13.5;
+  return <div style={{ display: "flex", gap: 4 }}>
+    <select style={{ ...inputStyle, width: w1, padding: pad, fontSize: fs }} value={type || ""} onChange={(e) => onChange({ type: e.target.value || null, value })}>
+      <option value="">Sans remise</option>
+      <option value="percent">%</option>
+      <option value="amount">FCFA</option>
+    </select>
+    {type && <input type="number" min="0" style={{ ...inputStyle, width: w2, padding: pad, fontSize: fs }} value={value || ""} placeholder={type === "percent" ? "%" : "FCFA"} onChange={(e) => onChange({ type, value: +e.target.value })} />}
+  </div>;
+}
+
 function NewReservationModal({ data, run, onClose }) {
   const accountId = useAccountId();
   const [clientMode, setClientMode] = useState("existing");
@@ -1116,11 +1157,18 @@ function NewReservationModal({ data, run, onClose }) {
   const [caution, setCaution] = useState(0);
   const [driverId, setDriverId] = useState("");
   const [freelance, setFreelance] = useState({ name: "", phone: "", fee: "" });
+  const [discountType, setDiscountType] = useState(null);
+  const [discountValue, setDiscountValue] = useState(0);
   const [saving, setSaving] = useState(false);
 
   const applyPack = (packId) => {
     const pack = data.packs.find((p) => p.id === packId); if (!pack) return;
-    const next = { ...selectedItems }; pack.items.forEach((pi) => { next[pi.itemId] = (next[pi.itemId] || 0) + pi.qty; }); setSelectedItems(next);
+    const next = { ...selectedItems };
+    pack.items.forEach((pi) => {
+      const cur = next[pi.itemId] || { qty: 0, discountType: null, discountValue: 0 };
+      next[pi.itemId] = { ...cur, qty: cur.qty + pi.qty };
+    });
+    setSelectedItems(next);
   };
 
   const submit = async () => {
@@ -1130,9 +1178,12 @@ function NewReservationModal({ data, run, onClose }) {
       if (clientMode === "new") { if (!newClient.name) { setSaving(false); return; } cId = await db.createClient(newClient.name, newClient.phone, accountId); }
       let dId = driverId || null;
       if (driverId === "__new_freelance") { if (!freelance.name) { setSaving(false); return; } dId = await db.createDriver(freelance.name, freelance.phone, "externe", +freelance.fee || 0, accountId); }
-      const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => { const inv = data.inventory.find((i) => i.id === itemId); return { itemId, qty, unit: inv.unit }; });
+      const items = Object.entries(selectedItems).filter(([, s]) => s.qty > 0).map(([itemId, s]) => {
+        const inv = data.inventory.find((i) => i.id === itemId);
+        return { itemId, qty: s.qty, unit: inv.unit, discountType: s.discountType || null, discountValue: s.discountType ? (+s.discountValue || 0) : 0 };
+      });
       if (items.length === 0 || !start || !end) { setSaving(false); return; }
-      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode }, accountId));
+      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode, discountType, discountValue: discountType ? (+discountValue || 0) : 0 }, accountId));
       onClose();
     } finally { setSaving(false); }
   };
@@ -1152,13 +1203,25 @@ function NewReservationModal({ data, run, onClose }) {
     </Field>
     <Field label="Packs prédéfinis (optionnel)"><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{data.packs.map((p) => <Btn key={p.id} small variant="gold" onClick={() => applyPack(p.id)}>{p.name}</Btn>)}</div></Field>
     <Field label="Articles et quantités">
-      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
-        {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
-          <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
-          <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
-        </div>)}
+      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
+        {data.inventory.map((i) => {
+          const sel = selectedItems[i.id] || { qty: 0, discountType: null, discountValue: 0 };
+          return <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA", gap: 6 }}>
+            <span style={{ fontSize: 13, flex: 1 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
+            <input type="number" min="0" style={{ ...inputStyle, width: 52 }} value={sel.qty || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: { ...sel, qty: +e.target.value } })} />
+            <DiscountInput small type={sel.discountType} value={sel.discountValue} onChange={(d) => setSelectedItems({ ...selectedItems, [i.id]: { ...sel, discountType: d.type, discountValue: d.value } })} />
+          </div>;
+        })}
       </div>
     </Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Remise globale"><select style={inputStyle} value={discountType || ""} onChange={(e) => setDiscountType(e.target.value || null)}>
+        <option value="">Aucune</option>
+        <option value="percent">Pourcentage (%)</option>
+        <option value="amount">Montant fixe (FCFA)</option>
+      </select></Field>
+      {discountType && <Field label={discountType === "percent" ? "Valeur (%)" : "Valeur (FCFA)"}><input type="number" style={inputStyle} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} /></Field>}
+    </div>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
       <Field label="Date de début"><input type="date" style={inputStyle} value={start} onChange={(e) => setStart(e.target.value)} /></Field>
       <Field label="Date de fin"><input type="date" style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
@@ -1191,7 +1254,11 @@ function NewReservationModal({ data, run, onClose }) {
 
 function EditReservationModal({ data, run, reservation, onClose }) {
   const accountId = useAccountId();
-  const [selectedItems, setSelectedItems] = useState(() => { const obj = {}; reservation.items.forEach((it) => { obj[it.itemId] = it.qty; }); return obj; });
+  const [selectedItems, setSelectedItems] = useState(() => {
+    const obj = {};
+    reservation.items.forEach((it) => { obj[it.itemId] = { qty: it.qty, discountType: it.discountType || null, discountValue: it.discountValue || 0 }; });
+    return obj;
+  });
   const [start, setStart] = useState(reservation.startDate);
   const [end, setEnd] = useState(reservation.endDate);
   const [address, setAddress] = useState(reservation.address || "");
@@ -1199,15 +1266,20 @@ function EditReservationModal({ data, run, reservation, onClose }) {
   const [seasonal, setSeasonal] = useState(reservation.seasonal);
   const [caution, setCaution] = useState(reservation.caution);
   const [driverId, setDriverId] = useState(reservation.driverId || "");
+  const [discountType, setDiscountType] = useState(reservation.discountType || null);
+  const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    const items = Object.entries(selectedItems).filter(([, q]) => q > 0).map(([itemId, qty]) => { const inv = data.inventory.find((i) => i.id === itemId); return { itemId, qty, unit: inv ? inv.unit : 0 }; });
+    const items = Object.entries(selectedItems).filter(([, s]) => s.qty > 0).map(([itemId, s]) => {
+      const inv = data.inventory.find((i) => i.id === itemId);
+      return { itemId, qty: s.qty, unit: inv ? inv.unit : 0, discountType: s.discountType || null, discountValue: s.discountType ? (+s.discountValue || 0) : 0 };
+    });
     if (items.length === 0 || !start || !end) return;
     setSaving(true);
     try {
       await run(async () => {
-        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0 }, accountId);
+        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0, discountType, discountValue: discountType ? (+discountValue || 0) : 0 }, accountId);
         await db.updateReservationItems(reservation.id, items, accountId);
       });
       onClose();
@@ -1217,13 +1289,25 @@ function EditReservationModal({ data, run, reservation, onClose }) {
   return <Modal title={`Modifier la commande — ${reservation.clientName}`} onClose={onClose} width={640}>
     <Field label="Client"><div style={{ ...inputStyle, background: "#F1EFE8", color: "#5B564C" }}>{reservation.clientName}</div></Field>
     <Field label="Articles et quantités">
-      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 160, overflowY: "auto" }}>
-        {data.inventory.map((i) => <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA" }}>
-          <span style={{ fontSize: 13 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
-          <input type="number" min="0" style={{ ...inputStyle, width: 70 }} value={selectedItems[i.id] || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: +e.target.value })} />
-        </div>)}
+      <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
+        {data.inventory.map((i) => {
+          const sel = selectedItems[i.id] || { qty: 0, discountType: null, discountValue: 0 };
+          return <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px", borderBottom: "1px solid #F3F1EA", gap: 6 }}>
+            <span style={{ fontSize: 13, flex: 1 }}>{i.name} <span style={{ color: "#8A857A" }}>({fmt(i.unit)}/j)</span></span>
+            <input type="number" min="0" style={{ ...inputStyle, width: 52 }} value={sel.qty || 0} onChange={(e) => setSelectedItems({ ...selectedItems, [i.id]: { ...sel, qty: +e.target.value } })} />
+            <DiscountInput small type={sel.discountType} value={sel.discountValue} onChange={(d) => setSelectedItems({ ...selectedItems, [i.id]: { ...sel, discountType: d.type, discountValue: d.value } })} />
+          </div>;
+        })}
       </div>
     </Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <Field label="Remise globale"><select style={inputStyle} value={discountType || ""} onChange={(e) => setDiscountType(e.target.value || null)}>
+        <option value="">Aucune</option>
+        <option value="percent">Pourcentage (%)</option>
+        <option value="amount">Montant fixe (FCFA)</option>
+      </select></Field>
+      {discountType && <Field label={discountType === "percent" ? "Valeur (%)" : "Valeur (FCFA)"}><input type="number" style={inputStyle} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} /></Field>}
+    </div>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
       <Field label="Date de début"><input type="date" style={inputStyle} value={start} onChange={(e) => setStart(e.target.value)} /></Field>
       <Field label="Date de fin"><input type="date" style={inputStyle} value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
@@ -1293,6 +1377,7 @@ function ReservationDetail({ data, run, id, onClose, onEdit }) {
         </span>
       </div>
       <div style={{ fontSize: 13, marginBottom: 8 }}>Total : <b>{fmt(total)}</b> · Payé : <b style={{ color: paid >= total ? "#1F6F4B" : "#B3261E" }}>{fmt(paid)}</b> · Reste : <b>{fmt(Math.max(total - paid, 0))}</b></div>
+      {(() => { const bd = reservationBreakdown(r); const totalDiscount = bd.itemDiscountTotal + bd.globalDiscountAmount; return totalDiscount > 0 ? <div style={{ fontSize: 12, color: "#1F6F4B", marginBottom: 8 }}>🏷️ Remise totale appliquée : -{fmt(totalDiscount)}</div> : null; })()}
       {r.payments.map((p) => <div key={p.id} style={{ fontSize: 12.5, color: "#5B564C" }}>• {fmt(p.amount)} — {p.mode} — {p.date}</div>)}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <input type="number" placeholder="Montant" style={{ ...inputStyle, width: 120 }} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
