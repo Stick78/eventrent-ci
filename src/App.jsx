@@ -278,7 +278,7 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
     }
   };
 
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+  return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
     <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <div style={{ width: 34, height: 34, borderRadius: "50%", background: "#1F6F4B", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff" }}>ER</div>
@@ -340,7 +340,7 @@ function SignupScreen({ onBackToLogin }) {
     </div>;
   }
 
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+  return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
     <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360 }}>
       <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Créer mon entreprise</div>
       <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>14 jours d'essai gratuit, sans engagement</div>
@@ -395,7 +395,7 @@ function JoinScreen({ onBackToLogin }) {
     </div>;
   }
 
-  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+  return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
     <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360 }}>
       <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Rejoindre une entreprise</div>
       <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Utilise le code fourni par ton administrateur</div>
