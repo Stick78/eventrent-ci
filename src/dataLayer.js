@@ -23,9 +23,12 @@ const mapReservation = (r) => ({
   cautionReturned: r.caution_returned != null ? Number(r.caution_returned) : null,
   checkOut: r.checkout_photo_url,
   checkIn: r.checkin_photo_url,
+  discountType: r.discount_type || null,
+  discountValue: Number(r.discount_value || 0),
   items: (r.reservation_items || []).map((ri) => ({
     riId: ri.id, itemId: ri.item_id, name: ri.inventory?.name || "Article",
     qty: ri.qty, unit: Number(ri.unit_price), damagedQty: ri.damaged_qty || 0,
+    discountType: ri.discount_type || null, discountValue: Number(ri.discount_value || 0),
   })),
   payments: (r.payments || []).map((p) => ({ id: p.id, amount: Number(p.amount), mode: p.mode, date: (p.paid_at || "").slice(0, 10) })),
   damaged: (r.reservation_items || []).filter((ri) => ri.damaged_qty > 0).map((ri) => ({ itemId: ri.item_id, qty: ri.damaged_qty })),
@@ -50,9 +53,9 @@ const mapAccount = (r) => ({
 
 const RESERVATION_SELECT = `
   id, client_id, driver_id, start_date, end_date, address, zone, seasonal, status,
-  caution, caution_returned, checkout_photo_url, checkin_photo_url,
+  caution, caution_returned, checkout_photo_url, checkin_photo_url, discount_type, discount_value,
   clients ( name ),
-  reservation_items ( id, item_id, qty, unit_price, damaged_qty, inventory ( name ) ),
+  reservation_items ( id, item_id, qty, unit_price, damaged_qty, discount_type, discount_value, inventory ( name ) ),
   payments ( id, amount, mode, paid_at )
 `;
 
@@ -214,14 +217,18 @@ export async function deleteDriver(id, accountId) {
 }
 
 // ---------- reservations ----------
-export async function createReservation({ clientId, items, startDate, endDate, address, zone, seasonal, caution, driverId, deposit, depositMode }, accountId) {
+export async function createReservation({ clientId, items, startDate, endDate, address, zone, seasonal, caution, driverId, deposit, depositMode, discountType, discountValue }, accountId) {
   const { data: resv, error: e1 } = await supabase.from("reservations").insert({
     client_id: clientId, driver_id: driverId || null, start_date: startDate, end_date: endDate,
     address, zone, seasonal, status: "En attente", caution: caution || 0, account_id: accountId,
+    discount_type: discountType || null, discount_value: discountType ? (discountValue || 0) : 0,
   }).select().single();
   if (e1) throw e1;
 
-  const itemRows = items.map((it) => ({ reservation_id: resv.id, item_id: it.itemId, qty: it.qty, unit_price: it.unit, account_id: accountId }));
+  const itemRows = items.map((it) => ({
+    reservation_id: resv.id, item_id: it.itemId, qty: it.qty, unit_price: it.unit, account_id: accountId,
+    discount_type: it.discountType || null, discount_value: it.discountType ? (it.discountValue || 0) : 0,
+  }));
   const { error: e2 } = await supabase.from("reservation_items").insert(itemRows);
   if (e2) throw e2;
 
@@ -232,9 +239,10 @@ export async function createReservation({ clientId, items, startDate, endDate, a
   return resv.id;
 }
 
-export async function updateReservationInfo(reservationId, { startDate, endDate, address, zone, seasonal, driverId, caution }, accountId) {
+export async function updateReservationInfo(reservationId, { startDate, endDate, address, zone, seasonal, driverId, caution, discountType, discountValue }, accountId) {
   const { error } = await supabase.from("reservations").update({
     start_date: startDate, end_date: endDate, address, zone, seasonal, driver_id: driverId || null, caution: caution || 0,
+    discount_type: discountType || null, discount_value: discountType ? (discountValue || 0) : 0,
   }).eq("id", reservationId).eq("account_id", accountId);
   if (error) throw error;
 }
@@ -243,7 +251,10 @@ export async function updateReservationItems(reservationId, items, accountId) {
   const { error: eDel } = await supabase.from("reservation_items").delete().eq("reservation_id", reservationId);
   if (eDel) throw eDel;
   if (items.length > 0) {
-    const itemRows = items.map((it) => ({ reservation_id: reservationId, item_id: it.itemId, qty: it.qty, unit_price: it.unit, account_id: accountId }));
+    const itemRows = items.map((it) => ({
+      reservation_id: reservationId, item_id: it.itemId, qty: it.qty, unit_price: it.unit, account_id: accountId,
+      discount_type: it.discountType || null, discount_value: it.discountType ? (it.discountValue || 0) : 0,
+    }));
     const { error: eIns } = await supabase.from("reservation_items").insert(itemRows);
     if (eIns) throw eIns;
   }
