@@ -326,6 +326,44 @@ export async function updateTeamMemberName(id, name, accountId) {
   const { error } = await supabase.from("profiles").update({ name }).eq("id", id).eq("account_id", accountId);
   if (error) throw error;
 }
+export async function deleteTeamMember(id, accountId) {
+  const { error } = await supabase.from("profiles").delete().eq("id", id).eq("account_id", accountId);
+  if (error) throw error;
+}
+
+// ---------- invitations ----------
+export async function fetchInvites(accountId) {
+  try {
+    const { data, error } = await supabase.from("invites").select("*").eq("account_id", accountId).order("created_at", { ascending: false });
+    if (error) throw error;
+    return data.map((i) => ({
+      id: i.id, code: i.code, permissions: i.permissions || {},
+      used: i.used, createdAt: i.created_at, expiresAt: i.expires_at,
+    }));
+  } catch (e) {
+    console.error("Impossible de charger les invitations :", e);
+    return [];
+  }
+}
+export async function createInvite(accountId, permissions) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const code = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const { data, error } = await supabase.from("invites").insert({ account_id: accountId, code, permissions }).select().single();
+  if (error) throw error;
+  return { id: data.id, code: data.code };
+}
+export async function deleteInvite(id, accountId) {
+  const { error } = await supabase.from("invites").delete().eq("id", id).eq("account_id", accountId);
+  if (error) throw error;
+}
+export async function joinCompanyWithInvite({ code, name, email, password }) {
+  const { data: authData, error: e1 } = await supabaseSignup.auth.signUp({ email, password });
+  if (e1) throw e1;
+  if (!authData.session) throw new Error("Inscription incomplète (session manquante), réessaie.");
+  const { error: e2 } = await supabaseSignup.rpc("join_company_with_invite", { p_code: code.trim().toUpperCase(), p_name: name });
+  if (e2) throw e2;
+  return true;
+}
 
 // ---------- recettes additionnelles (hors location) ----------
 export async function fetchAdditionalRevenues(accountId) {
