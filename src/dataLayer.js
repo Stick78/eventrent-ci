@@ -40,7 +40,7 @@ const mapSettings = (r) => ({
   footerText: r.footer_text || "",
   logo: r.logo_base64 || null,
 });
-const mapProfile = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {} });
+const mapProfile = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, storeId: r.store_id || null });
 const mapAccount = (r) => ({
   id: r.id,
   companyName: r.company_name,
@@ -104,6 +104,7 @@ export async function fetchProfile(userId) {
     name: data.name,
     permissions: data.permissions || {},
     isPlatformAdmin: !!data.is_platform_admin,
+    storeId: data.store_id || null,
   };
 }
 
@@ -135,20 +136,20 @@ export async function signUpCompany({ companyName, adminName, email, password })
 // ============================================================
 // DONNÉES MÉTIER (toutes filtrées par account_id)
 // ============================================================
-export async function fetchAll(accountId) {
+export async function fetchAll(accountId, storeId) {
   const [inv, cli, drv, pks, res] = await Promise.all([
-    supabase.from("inventory").select("*").eq("account_id", accountId).order("name"),
+    supabase.from("inventory").select("*").eq("account_id", accountId).eq("store_id", storeId).order("name"),
     supabase.from("clients").select("*").eq("account_id", accountId).order("name"),
     supabase.from("drivers").select("*").eq("account_id", accountId).order("name"),
-    supabase.from("packs").select("*, pack_items(item_id, qty)").eq("account_id", accountId),
-    supabase.from("reservations").select(RESERVATION_SELECT).eq("account_id", accountId).order("created_at", { ascending: true }),
+    supabase.from("packs").select("*, pack_items(item_id, qty)").eq("account_id", accountId).eq("store_id", storeId),
+    supabase.from("reservations").select(RESERVATION_SELECT).eq("account_id", accountId).eq("store_id", storeId).order("created_at", { ascending: true }),
   ]);
   const errs = [inv, cli, drv, pks, res].filter((x) => x.error);
   if (errs.length) throw errs[0].error;
   const settings = await fetchSettings(accountId);
   const teamMembers = await fetchTeamMembers(accountId);
-  const additionalRevenues = await fetchAdditionalRevenues(accountId);
-  const expenses = await fetchExpenses(accountId);
+  const additionalRevenues = await fetchAdditionalRevenues(accountId, storeId);
+  const expenses = await fetchExpenses(accountId, storeId);
   return {
     inventory: inv.data.map(mapInventory),
     clients: cli.data.map(mapClient),
@@ -162,8 +163,33 @@ export async function fetchAll(accountId) {
   };
 }
 
+// ---------- magasins ----------
+export async function fetchStores(accountId) {
+  try {
+    const { data, error } = await supabase.from("stores").select("*").eq("account_id", accountId).order("created_at");
+    if (error) throw error;
+    return data.map((s) => ({ id: s.id, name: s.name, address: s.address || "" }));
+  } catch (e) {
+    console.error("Impossible de charger les magasins :", e);
+    return [];
+  }
+}
+export async function createStore(accountId, name, address) {
+  const { data, error } = await supabase.from("stores").insert({ account_id: accountId, name, address: address || "" }).select().single();
+  if (error) throw error;
+  return { id: data.id, name: data.name, address: data.address || "" };
+}
+export async function updateStore(id, name, address, accountId) {
+  const { error } = await supabase.from("stores").update({ name, address: address || "" }).eq("id", id).eq("account_id", accountId);
+  if (error) throw error;
+}
+export async function deleteStore(id, accountId) {
+  const { error } = await supabase.from("stores").delete().eq("id", id).eq("account_id", accountId);
+  if (error) throw error;
+}
+
 // ---------- inventory ----------
-export async function saveInventoryItem(item, accountId) {
+export async function saveInventoryItem(item, accountId, storeId) {
   const row = {
     name: item.name, category: item.category, total_qty: item.total,
     unit_price: item.unit, low_stock_threshold: item.low, photo_url: item.photo,
@@ -172,7 +198,7 @@ export async function saveInventoryItem(item, accountId) {
     const { error } = await supabase.from("inventory").update(row).eq("id", item.id).eq("account_id", accountId);
     if (error) throw error;
   } else {
-    const { error } = await supabase.from("inventory").insert({ ...row, account_id: accountId });
+    const { error } = await supabase.from("inventory").insert({ ...row, account_id: accountId, store_id: storeId });
     if (error) throw error;
   }
 }
@@ -217,10 +243,10 @@ export async function deleteDriver(id, accountId) {
 }
 
 // ---------- reservations ----------
-export async function createReservation({ clientId, items, startDate, endDate, address, zone, seasonal, caution, driverId, deposit, depositMode, discountType, discountValue }, accountId) {
+export async function createReservation({ clientId, items, startDate, endDate, address, zone, seasonal, caution, driverId, deposit, depositMode, discountType, discountValue }, accountId, storeId) {
   const { data: resv, error: e1 } = await supabase.from("reservations").insert({
     client_id: clientId, driver_id: driverId || null, start_date: startDate, end_date: endDate,
-    address, zone, seasonal, status: "En attente", caution: caution || 0, account_id: accountId,
+    address, zone, seasonal, status: "En attente", caution: caution || 0, account_id: accountId, store_id: storeId,
     discount_type: discountType || null, discount_value: discountType ? (discountValue || 0) : 0,
   }).select().single();
   if (e1) throw e1;
@@ -333,7 +359,7 @@ export async function saveSettings(settings, accountId) {
 // ---------- équipe (profiles rattachés à ce compte) ----------
 export async function fetchTeamMembers(accountId) {
   try {
-    const { data, error } = await supabase.from("profiles").select("id, name, permissions").eq("account_id", accountId).order("name");
+    const { data, error } = await supabase.from("profiles").select("id, name, permissions, store_id").eq("account_id", accountId).order("name");
     if (error) throw error;
     return data.map(mapProfile);
   } catch (e) {
@@ -349,6 +375,10 @@ export async function updateTeamMemberName(id, name, accountId) {
   const { error } = await supabase.from("profiles").update({ name }).eq("id", id).eq("account_id", accountId);
   if (error) throw error;
 }
+export async function updateTeamMemberStore(id, storeId, accountId) {
+  const { error } = await supabase.from("profiles").update({ store_id: storeId || null }).eq("id", id).eq("account_id", accountId);
+  if (error) throw error;
+}
 export async function deleteTeamMember(id, accountId) {
   const { error } = await supabase.from("profiles").delete().eq("id", id).eq("account_id", accountId);
   if (error) throw error;
@@ -361,17 +391,17 @@ export async function fetchInvites(accountId) {
     if (error) throw error;
     return data.map((i) => ({
       id: i.id, code: i.code, permissions: i.permissions || {},
-      used: i.used, createdAt: i.created_at, expiresAt: i.expires_at,
+      used: i.used, createdAt: i.created_at, expiresAt: i.expires_at, storeId: i.store_id || null,
     }));
   } catch (e) {
     console.error("Impossible de charger les invitations :", e);
     return [];
   }
 }
-export async function createInvite(accountId, permissions) {
+export async function createInvite(accountId, permissions, storeId) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const code = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  const { data, error } = await supabase.from("invites").insert({ account_id: accountId, code, permissions }).select().single();
+  const { data, error } = await supabase.from("invites").insert({ account_id: accountId, code, permissions, store_id: storeId || null }).select().single();
   if (error) throw error;
   return { id: data.id, code: data.code };
 }
@@ -389,9 +419,9 @@ export async function joinCompanyWithInvite({ code, name, email, password }) {
 }
 
 // ---------- recettes additionnelles (hors location) ----------
-export async function fetchAdditionalRevenues(accountId) {
+export async function fetchAdditionalRevenues(accountId, storeId) {
   try {
-    const { data, error } = await supabase.from("additional_revenues").select("*").eq("account_id", accountId).order("date", { ascending: false });
+    const { data, error } = await supabase.from("additional_revenues").select("*").eq("account_id", accountId).eq("store_id", storeId).order("date", { ascending: false });
     if (error) throw error;
     return data.map((r) => ({ id: r.id, description: r.description, amount: Number(r.amount), category: r.category || "Autre", date: r.date }));
   } catch (e) {
@@ -399,8 +429,8 @@ export async function fetchAdditionalRevenues(accountId) {
     return [];
   }
 }
-export async function createAdditionalRevenue({ description, amount, category, date }, accountId) {
-  const { error } = await supabase.from("additional_revenues").insert({ description, amount, category: category || "Autre", date, account_id: accountId });
+export async function createAdditionalRevenue({ description, amount, category, date }, accountId, storeId) {
+  const { error } = await supabase.from("additional_revenues").insert({ description, amount, category: category || "Autre", date, account_id: accountId, store_id: storeId });
   if (error) throw error;
 }
 export async function deleteAdditionalRevenue(id, accountId) {
@@ -409,9 +439,9 @@ export async function deleteAdditionalRevenue(id, accountId) {
 }
 
 // ---------- dépenses ----------
-export async function fetchExpenses(accountId) {
+export async function fetchExpenses(accountId, storeId) {
   try {
-    const { data, error } = await supabase.from("expenses").select("*").eq("account_id", accountId).order("date", { ascending: false });
+    const { data, error } = await supabase.from("expenses").select("*").eq("account_id", accountId).eq("store_id", storeId).order("date", { ascending: false });
     if (error) throw error;
     return data.map((r) => ({ id: r.id, description: r.description, amount: Number(r.amount), category: r.category || "Autre", date: r.date }));
   } catch (e) {
@@ -419,8 +449,8 @@ export async function fetchExpenses(accountId) {
     return [];
   }
 }
-export async function createExpense({ description, amount, category, date }, accountId) {
-  const { error } = await supabase.from("expenses").insert({ description, amount, category: category || "Autre", date, account_id: accountId });
+export async function createExpense({ description, amount, category, date }, accountId, storeId) {
+  const { error } = await supabase.from("expenses").insert({ description, amount, category: category || "Autre", date, account_id: accountId, store_id: storeId });
   if (error) throw error;
 }
 export async function deleteExpense(id, accountId) {
