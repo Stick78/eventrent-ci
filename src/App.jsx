@@ -177,13 +177,17 @@ export default function App() {
   const [account, setAccount] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [authMode, setAuthMode] = useState("login"); // "login" | "signup" | "join"
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
   useEffect(() => {
     let sub;
     (async () => {
       const s = await db.getSession();
       setSession(s || null);
-      sub = db.onAuthStateChange((newSession) => setSession(newSession));
+      sub = db.onAuthStateChange((event, newSession) => {
+        if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
+        setSession(newSession);
+      });
     })();
     return () => { if (sub) sub.unsubscribe(); };
   }, []);
@@ -210,6 +214,9 @@ export default function App() {
 
   if (session === undefined) {
     return <FullScreenLoader />;
+  }
+  if (recoveryMode) {
+    return <ResetPasswordScreen onDone={() => setRecoveryMode(false)} onLogout={handleLogout} />;
   }
   if (!session) {
     if (authMode === "signup") return <SignupScreen onBackToLogin={() => setAuthMode("login")} />;
@@ -265,6 +272,8 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   const submit = async () => {
     if (!email || !password) return;
@@ -277,6 +286,47 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
       setLoading(false);
     }
   };
+
+  const submitForgot = async () => {
+    if (!email) return;
+    setError(""); setLoading(true);
+    try {
+      await db.sendPasswordReset(email.trim());
+      setForgotSent(true);
+    } catch (e) {
+      console.error(e);
+      setError("Impossible d'envoyer l'email. Vérifie l'adresse et réessaie.");
+    } finally { setLoading(false); }
+  };
+
+  if (forgotMode) {
+    return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+      <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320 }}>
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Mot de passe oublié</div>
+        {forgotSent ? (
+          <>
+            <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>
+              Un email vient de t'être envoyé à <b>{email}</b>. Clique sur le lien qu'il contient pour choisir un nouveau mot de passe.
+            </div>
+            <Btn variant="ghost" onClick={() => { setForgotMode(false); setForgotSent(false); }}>Retour à la connexion</Btn>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Indique ton email, tu recevras un lien pour choisir un nouveau mot de passe.</div>
+            <Field label="Email">
+              <input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitForgot()} autoFocus />
+            </Field>
+            {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+            <Btn disabled={loading} onClick={submitForgot}>{loading ? "Envoi..." : "Envoyer le lien"}</Btn>
+            <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
+              <span onClick={() => { setForgotMode(false); setError(""); }} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Retour à la connexion</span>
+            </div>
+          </>
+        )}
+      </div>
+      <GuideLink />
+    </div>;
+  }
 
   return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
     <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320 }}>
@@ -293,7 +343,10 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
       </Field>
       {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
       <Btn disabled={loading} onClick={submit}>{loading ? "Connexion..." : "Se connecter"}</Btn>
-      <div style={{ textAlign: "center", marginTop: 16, fontSize: 12.5, color: TEXT_MUTED }}>
+      <div style={{ textAlign: "center", marginTop: 12, fontSize: 12, color: TEXT_MUTED }}>
+        <span onClick={() => { setForgotMode(true); setError(""); }} style={{ color: TEXT_MUTED, textDecoration: "underline", cursor: "pointer" }}>Mot de passe oublié ?</span>
+      </div>
+      <div style={{ textAlign: "center", marginTop: 12, fontSize: 12.5, color: TEXT_MUTED }}>
         Nouvelle entreprise ? <span onClick={onShowSignup} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Créer mon compte</span>
       </div>
       <div style={{ textAlign: "center", marginTop: 8, fontSize: 12.5, color: TEXT_MUTED }}>
@@ -301,6 +354,55 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
       </div>
     </div>
     <GuideLink />
+  </div>;
+}
+
+// ---------- Réinitialisation du mot de passe (via lien reçu par email) ----------
+function ResetPasswordScreen({ onDone, onLogout }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const submit = async () => {
+    if (password.length < 6) { setError("Le mot de passe doit contenir au moins 6 caractères."); return; }
+    if (password !== confirm) { setError("Les deux mots de passe ne correspondent pas."); return; }
+    setError(""); setLoading(true);
+    try {
+      await db.updatePassword(password);
+      setDone(true);
+    } catch (e) {
+      console.error(e);
+      setError("Impossible de mettre à jour le mot de passe. Réessaie.");
+    } finally { setLoading(false); }
+  };
+
+  return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 320 }}>
+      <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Nouveau mot de passe</div>
+      {done ? (
+        <>
+          <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Ton mot de passe a bien été mis à jour.</div>
+          <Btn onClick={onDone}>Continuer</Btn>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 20 }}>Choisis un nouveau mot de passe pour ton compte.</div>
+          <Field label="Nouveau mot de passe (6 caractères min.)">
+            <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+          </Field>
+          <Field label="Confirme le mot de passe">
+            <input type="password" style={inputStyle} value={confirm} onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          </Field>
+          {error && <div style={{ color: "#B3261E", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+          <Btn disabled={loading} onClick={submit}>{loading ? "Enregistrement..." : "Mettre à jour le mot de passe"}</Btn>
+          <div style={{ textAlign: "center", marginTop: 16, fontSize: 12, color: TEXT_MUTED }}>
+            <span onClick={onLogout} style={{ color: TEXT_MUTED, textDecoration: "underline", cursor: "pointer" }}>Annuler et se déconnecter</span>
+          </div>
+        </>
+      )}
+    </div>
   </div>;
 }
 
