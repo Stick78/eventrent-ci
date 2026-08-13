@@ -53,7 +53,7 @@ const applyDiscount = (amount, type, value) => {
 };
 const discountLabel = (type, value) => {
   if (!type || !value) return "";
-  return type === "percent" ? `-${value}%` : `-${fmt(value)}`;
+  return type === "percent" ? `-${value}%` : `-${fmtPdf(value)}`;
 };
 const reservationBreakdown = (r) => {
   const rawSubtotal = r.items.reduce((s, it) => s + it.qty * it.unit, 0);
