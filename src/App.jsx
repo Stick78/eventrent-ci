@@ -40,6 +40,10 @@ const TEXT_MUTED = "#6B7280";
 const TEXT_DARK = "#111827";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " FCFA";
+// Version dédiée au PDF : jsPDF (police Helvetica standard) ne supporte pas
+// l'espace fine insécable utilisée par toLocaleString("fr-FR") comme séparateur
+// de milliers — elle s'affichait comme un "/". On la remplace par un espace normal.
+const fmtPdf = (n) => Math.round(Number(n) || 0).toLocaleString("fr-FR").replace(/[\u202F\u00A0]/g, " ") + " FCFA";
 const fmtDate = (iso) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const applyDiscount = (amount, type, value) => {
   if (!type || !value) return amount;
@@ -148,7 +152,7 @@ function generateQuotePDF(r, data) {
   const rows = r.items.map((it) => {
     const lineRaw = it.qty * it.unit;
     const lineAfter = applyDiscount(lineRaw, it.discountType, it.discountValue);
-    return [it.name, String(it.qty), fmt(it.unit), discountLabel(it.discountType, it.discountValue) || "—", fmt(lineAfter)];
+    return [it.name, String(it.qty), fmtPdf(it.unit), discountLabel(it.discountType, it.discountValue) || "—", fmtPdf(lineAfter)];
   });
   doc.autoTable({
     startY: y + 20,
@@ -168,22 +172,22 @@ function generateQuotePDF(r, data) {
     doc.text(value, 196, finalY, { align: "right" });
     finalY += bold ? 8 : 6;
   };
-  totalsLine("Sous-total articles (avant remise)", fmt(bd.rawSubtotal), false);
-  if (bd.itemDiscountTotal > 0) totalsLine("Remises sur articles", `-${fmt(bd.itemDiscountTotal)}`, false);
-  if (r.seasonal) totalsLine("Majoration haute saison (+20%)", fmt(bd.seasonalFee), false);
-  if (bd.globalDiscountAmount > 0) totalsLine(`Remise globale (${discountLabel(r.discountType, r.discountValue)})`, `-${fmt(bd.globalDiscountAmount)}`, false);
-  if (bd.zoneFee > 0) totalsLine("Frais de livraison", fmt(bd.zoneFee), false);
+  totalsLine("Sous-total articles (avant remise)", fmtPdf(bd.rawSubtotal), false);
+  if (bd.itemDiscountTotal > 0) totalsLine("Remises sur articles", `-${fmtPdf(bd.itemDiscountTotal)}`, false);
+  if (r.seasonal) totalsLine("Majoration haute saison (+20%)", fmtPdf(bd.seasonalFee), false);
+  if (bd.globalDiscountAmount > 0) totalsLine(`Remise globale (${discountLabel(r.discountType, r.discountValue)})`, `-${fmtPdf(bd.globalDiscountAmount)}`, false);
+  if (bd.zoneFee > 0) totalsLine("Frais de livraison", fmtPdf(bd.zoneFee), false);
   doc.setDrawColor(220, 220, 220);
   doc.line(140, finalY - 2, 196, finalY - 2);
-  totalsLine("TOTAL", fmt(total), true);
-  totalsLine("Déjà payé", fmt(paid), false);
-  totalsLine("Reste à payer", fmt(remaining), true);
+  totalsLine("TOTAL", fmtPdf(total), true);
+  totalsLine("Déjà payé", fmtPdf(paid), false);
+  totalsLine("Reste à payer", fmtPdf(remaining), true);
 
   finalY += 4;
   doc.setFontSize(9);
   doc.setFont(undefined, "normal");
   doc.setTextColor(90, 90, 90);
-  doc.text(`Caution demandée : ${fmt(r.caution)}`, 14, finalY);
+  doc.text(`Caution demandée : ${fmtPdf(r.caution)}`, 14, finalY);
 
   doc.setFontSize(8);
   doc.setTextColor(140, 140, 140);
@@ -1096,7 +1100,7 @@ function Reservations({ data, run, busy }) {
   const list = data.reservations.filter((r) => filter === "Tous" || r.status === filter).slice().reverse();
 
   return <div>
-    <PageBanner icon={CalendarDays} title="Réservations" subtitle="Commandes et suivi des paiements" />
+    <PageBanner icon={CalendarDays} title="Réservations" subtitle="Commandes et suivi des paiements (cliquez sur une réservation pour télécharger le devis en PDF)" />
     <SectionTitle action={<Btn icon={Plus} disabled={busy} onClick={() => setModal(true)}>Nouvelle commande (saisie manuelle)</Btn>}>&nbsp;</SectionTitle>
     <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
       {["Tous", ...STATUS_FLOW].map((s) => <div key={s} onClick={() => setFilter(s)} style={{ padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: filter === s ? "#1F6F4B" : "#F1EFE8", color: filter === s ? "#fff" : "#5B564C" }}>{s}</div>)}
