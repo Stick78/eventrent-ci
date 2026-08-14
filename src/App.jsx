@@ -64,7 +64,7 @@ const reservationBreakdown = (r) => {
   const afterSeasonal = itemsAfterDiscount + seasonalFee;
   const afterGlobalDiscount = applyDiscount(afterSeasonal, r.discountType, r.discountValue);
   const globalDiscountAmount = afterSeasonal - afterGlobalDiscount;
-  const zoneFee = ZONES.find((z) => z.id === r.zone)?.fee || 0;
+  const zoneFee = r.deliveryFeeOverride != null ? r.deliveryFeeOverride : (ZONES.find((z) => z.id === r.zone)?.fee || 0);
   const total = afterGlobalDiscount + zoneFee;
   return { rawSubtotal, itemsAfterDiscount, itemDiscountTotal, seasonalFee, globalDiscountAmount, zoneFee, total };
 };
@@ -1209,6 +1209,8 @@ function NewReservationModal({ data, run, onClose }) {
   const [freelance, setFreelance] = useState({ name: "", phone: "", fee: "" });
   const [discountType, setDiscountType] = useState(null);
   const [discountValue, setDiscountValue] = useState(0);
+  const [customDelivery, setCustomDelivery] = useState(false);
+  const [deliveryFeeValue, setDeliveryFeeValue] = useState(0);
   const [saving, setSaving] = useState(false);
 
   const applyPack = (packId) => {
@@ -1233,7 +1235,7 @@ function NewReservationModal({ data, run, onClose }) {
         return { itemId, qty: s.qty, unit: inv.unit, discountType: s.discountType || null, discountValue: s.discountType ? (+s.discountValue || 0) : 0 };
       });
       if (items.length === 0 || !start || !end) { setSaving(false); return; }
-      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode, discountType, discountValue: discountType ? (+discountValue || 0) : 0 }, accountId, storeId));
+      await run(() => db.createReservation({ clientId: cId, items, startDate: start, endDate: end, address, zone, seasonal, caution: +caution || 0, driverId: dId, deposit: +deposit || 0, depositMode, discountType, discountValue: discountType ? (+discountValue || 0) : 0, deliveryFeeOverride: customDelivery ? (+deliveryFeeValue || 0) : null }, accountId, storeId));
       onClose();
     } finally { setSaving(false); }
   };
@@ -1281,6 +1283,13 @@ function NewReservationModal({ data, run, onClose }) {
       <Field label="Zone de livraison"><select style={inputStyle} value={zone} onChange={(e) => setZone(e.target.value)}>{ZONES.map((z) => <option key={z.id} value={z.id}>{z.label} (+{fmt(z.fee)})</option>)}</select></Field>
       <Field label="Tarification"><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8 }}><input type="checkbox" checked={seasonal} onChange={(e) => setSeasonal(e.target.checked)} /> Haute saison (+20%)</label></Field>
     </div>
+    <Field label="Frais de livraison">
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: customDelivery ? 8 : 0 }}>
+        <input type="checkbox" checked={customDelivery} onChange={(e) => { setCustomDelivery(e.target.checked); if (e.target.checked) setDeliveryFeeValue(ZONES.find((z) => z.id === zone)?.fee || 0); }} />
+        Saisir un montant personnalisé (au lieu du tarif de zone)
+      </label>
+      {customDelivery && <input type="number" min="0" style={inputStyle} value={deliveryFeeValue} onChange={(e) => setDeliveryFeeValue(e.target.value)} placeholder="Montant en FCFA" />}
+    </Field>
     <Field label="Livreur">
       <select style={inputStyle} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
         <option value="">Non assigné</option>
@@ -1318,6 +1327,8 @@ function EditReservationModal({ data, run, reservation, onClose }) {
   const [driverId, setDriverId] = useState(reservation.driverId || "");
   const [discountType, setDiscountType] = useState(reservation.discountType || null);
   const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
+  const [customDelivery, setCustomDelivery] = useState(reservation.deliveryFeeOverride != null);
+  const [deliveryFeeValue, setDeliveryFeeValue] = useState(reservation.deliveryFeeOverride != null ? reservation.deliveryFeeOverride : (ZONES.find((z) => z.id === reservation.zone)?.fee || 0));
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -1329,7 +1340,7 @@ function EditReservationModal({ data, run, reservation, onClose }) {
     setSaving(true);
     try {
       await run(async () => {
-        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0, discountType, discountValue: discountType ? (+discountValue || 0) : 0 }, accountId);
+        await db.updateReservationInfo(reservation.id, { startDate: start, endDate: end, address, zone, seasonal, driverId: driverId || null, caution: +caution || 0, discountType, discountValue: discountType ? (+discountValue || 0) : 0, deliveryFeeOverride: customDelivery ? (+deliveryFeeValue || 0) : null }, accountId);
         await db.updateReservationItems(reservation.id, items, accountId);
       });
       onClose();
@@ -1367,6 +1378,13 @@ function EditReservationModal({ data, run, reservation, onClose }) {
       <Field label="Zone de livraison"><select style={inputStyle} value={zone} onChange={(e) => setZone(e.target.value)}>{ZONES.map((z) => <option key={z.id} value={z.id}>{z.label} (+{fmt(z.fee)})</option>)}</select></Field>
       <Field label="Tarification"><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8 }}><input type="checkbox" checked={seasonal} onChange={(e) => setSeasonal(e.target.checked)} /> Haute saison (+20%)</label></Field>
     </div>
+    <Field label="Frais de livraison">
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: customDelivery ? 8 : 0 }}>
+        <input type="checkbox" checked={customDelivery} onChange={(e) => { setCustomDelivery(e.target.checked); if (e.target.checked) setDeliveryFeeValue(ZONES.find((z) => z.id === zone)?.fee || 0); }} />
+        Saisir un montant personnalisé (au lieu du tarif de zone)
+      </label>
+      {customDelivery && <input type="number" min="0" style={inputStyle} value={deliveryFeeValue} onChange={(e) => setDeliveryFeeValue(e.target.value)} placeholder="Montant en FCFA" />}
+    </Field>
     <Field label="Livreur">
       <select style={inputStyle} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
         <option value="">Non assigné</option>
