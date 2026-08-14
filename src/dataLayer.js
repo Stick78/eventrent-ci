@@ -25,6 +25,7 @@ const mapReservation = (r) => ({
   checkIn: r.checkin_photo_url,
   discountType: r.discount_type || null,
   discountValue: Number(r.discount_value || 0),
+  deliveryFeeOverride: r.delivery_fee_override != null ? Number(r.delivery_fee_override) : null,
   items: (r.reservation_items || []).map((ri) => ({
     riId: ri.id, itemId: ri.item_id, name: ri.inventory?.name || "Article",
     qty: ri.qty, unit: Number(ri.unit_price), damagedQty: ri.damaged_qty || 0,
@@ -243,11 +244,12 @@ export async function deleteDriver(id, accountId) {
 }
 
 // ---------- reservations ----------
-export async function createReservation({ clientId, items, startDate, endDate, address, zone, seasonal, caution, driverId, deposit, depositMode, discountType, discountValue }, accountId, storeId) {
+export async function createReservation({ clientId, items, startDate, endDate, address, zone, seasonal, caution, driverId, deposit, depositMode, discountType, discountValue, deliveryFeeOverride }, accountId, storeId) {
   const { data: resv, error: e1 } = await supabase.from("reservations").insert({
     client_id: clientId, driver_id: driverId || null, start_date: startDate, end_date: endDate,
     address, zone, seasonal, status: "En attente", caution: caution || 0, account_id: accountId, store_id: storeId,
     discount_type: discountType || null, discount_value: discountType ? (discountValue || 0) : 0,
+    delivery_fee_override: deliveryFeeOverride != null ? deliveryFeeOverride : null,
   }).select().single();
   if (e1) throw e1;
 
@@ -265,10 +267,11 @@ export async function createReservation({ clientId, items, startDate, endDate, a
   return resv.id;
 }
 
-export async function updateReservationInfo(reservationId, { startDate, endDate, address, zone, seasonal, driverId, caution, discountType, discountValue }, accountId) {
+export async function updateReservationInfo(reservationId, { startDate, endDate, address, zone, seasonal, driverId, caution, discountType, discountValue, deliveryFeeOverride }, accountId) {
   const { error } = await supabase.from("reservations").update({
     start_date: startDate, end_date: endDate, address, zone, seasonal, driver_id: driverId || null, caution: caution || 0,
     discount_type: discountType || null, discount_value: discountType ? (discountValue || 0) : 0,
+    delivery_fee_override: deliveryFeeOverride != null ? deliveryFeeOverride : null,
   }).eq("id", reservationId).eq("account_id", accountId);
   if (error) throw error;
 }
