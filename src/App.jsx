@@ -302,6 +302,26 @@ function GuideLink() {
   </div>;
 }
 
+// Bannière d'installation pour les visiteurs sur iPhone/iPad (Safari ne propose
+// jamais de bandeau automatique — c'est une limitation d'Apple, il faut donc
+// expliquer la manip manuelle).
+function IosInstallBanner() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    const isStandalone = window.navigator.standalone === true;
+    const dismissed = localStorage.getItem("ios_install_banner_dismissed") === "true";
+    setShow(isIos && !isStandalone && !dismissed);
+  }, []);
+  if (!show) return null;
+  const dismiss = () => { localStorage.setItem("ios_install_banner_dismissed", "true"); setShow(false); };
+  return <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginTop: 16, width: 320, maxWidth: "90vw", fontSize: 12.5, color: TEXT_DARK, position: "relative" }}>
+    <X size={14} onClick={dismiss} style={{ position: "absolute", top: 10, right: 10, cursor: "pointer", color: TEXT_MUTED }} />
+    <div style={{ fontWeight: 800, marginBottom: 6 }}>📲 Installer sur iPhone</div>
+    <div>Appuie sur <b>Partager</b> (icône carrée avec une flèche vers le haut, en bas de l'écran) puis <b>« Sur l'écran d'accueil »</b> pour installer l'application.</div>
+  </div>;
+}
+
 function LoginScreen({ onShowSignup, onShowJoin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -389,6 +409,7 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
       </div>
     </div>
     <GuideLink />
+    <IosInstallBanner />
   </div>;
 }
 
