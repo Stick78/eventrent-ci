@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Package, CalendarDays, Users, Truck, Plus, X, Camera,
   AlertTriangle, ChevronLeft, ChevronRight, Trash2, Pencil, Phone, ShieldAlert,
   PackageCheck, Printer, Wallet, Loader2, FileDown, Settings as SettingsIcon,
-  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, ShieldCheck, BookOpen, Store
+  UserCog, BarChart3, LogOut, TrendingUp, Receipt, PiggyBank, ShieldCheck, BookOpen, Store, MessageCircle
 } from "lucide-react";
 import * as db from "./dataLayer";
 
@@ -324,6 +324,20 @@ function IosInstallBanner() {
   </div>;
 }
 
+// Bouton de contact WhatsApp — récupère le numéro configuré par le super-admin
+// (Platform → contact) et ouvre une conversation pré-remplie, sans avoir à
+// construire ni maintenir un vrai système de chat interne.
+function WhatsAppSupportLink({ context, style, iconSize = 13, label = "Contacter le support" }) {
+  const [phone, setPhone] = useState(null);
+  useEffect(() => { db.fetchPlatformSettings().then((s) => setPhone(s.contactPhone || null)); }, []);
+  if (!phone) return null;
+  const digits = phone.replace(/[^\d]/g, "");
+  const message = encodeURIComponent(`Bonjour, j'ai besoin d'aide${context ? ` (${context})` : ""}.`);
+  return <a href={`https://wa.me/${digits}?text=${message}`} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", textDecoration: "none", ...style }}>
+    <MessageCircle size={iconSize} /> {label}
+  </a>;
+}
+
 function LoginScreen({ onShowSignup, onShowJoin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -574,8 +588,6 @@ function JoinScreen({ onBackToLogin }) {
 }
 
 function TrialExpiredScreen({ account, onLogout }) {
-  const [contactPhone, setContactPhone] = useState(null);
-  useEffect(() => { db.fetchPlatformSettings().then((s) => setContactPhone(s.contactPhone)); }, []);
   return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
     <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 380, textAlign: "center" }}>
       <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
@@ -585,7 +597,9 @@ function TrialExpiredScreen({ account, onLogout }) {
       <div style={{ fontSize: 13.5, color: TEXT_MUTED, marginBottom: 20 }}>
         Pour continuer à utiliser EventRent CI, contacte-nous pour activer ton abonnement.
       </div>
-      {contactPhone && <div style={{ fontSize: 13, marginBottom: 20 }}>📞 Contact : {contactPhone}</div>}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+        <WhatsAppSupportLink context={`${account.companyName || "mon entreprise"} — activation abonnement`} label="Contacter sur WhatsApp" style={{ color: "#1F6F4B", fontWeight: 700 }} iconSize={15} />
+      </div>
       <Btn onClick={onLogout} variant="ghost">Se déconnecter</Btn>
     </div>
   </div>;
@@ -712,6 +726,7 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
             <a href={GUIDE_PDF_URL} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", textDecoration: "none", marginBottom: 8 }}>
               <BookOpen size={13} /> Aide (guide PDF)
             </a>
+            <WhatsAppSupportLink context={data.settings?.companyName} style={{ marginBottom: 8 }} />
             <div onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9BAFC9", cursor: "pointer" }}>
               <LogOut size={13} /> Déconnexion
             </div>
