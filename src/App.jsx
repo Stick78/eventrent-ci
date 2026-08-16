@@ -73,6 +73,32 @@ const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juill
 const GUIDE_PDF_URL = "/guide-utilisation-eventrent-ci.pdf";
 const PLAN_STORE_LIMITS = { standard: 1, multi_magasin: Infinity };
 const PLAN_LABELS = { standard: "Standard", multi_magasin: "Multi-magasins" };
+const PLAN_PRICING = {
+  standard: {
+    label: "Standard",
+    price: 10000,
+    tagline: "Pour une seule boutique",
+    features: [
+      "1 magasin",
+      "Inventaire, réservations et planning illimités",
+      "Devis PDF personnalisés avec votre logo",
+      "Bilan, recettes et dépenses",
+      "Membres d'équipe illimités",
+    ],
+  },
+  multi_magasin: {
+    label: "Multi-magasins",
+    price: 20000,
+    tagline: "Pour plusieurs points de vente",
+    features: [
+      "Magasins illimités",
+      "Tout ce qui est inclus dans Standard",
+      "Inventaire et réservations séparés par magasin",
+      "Membres d'équipe restreints à un magasin si besoin",
+      "Suivi financier par magasin",
+    ],
+  },
+};
 
 // Contexte : rend l'accountId courant accessible à tous les composants sans prop drilling
 const AccountContext = createContext(null);
@@ -258,7 +284,8 @@ export default function App() {
   if (!session) {
     if (authMode === "signup") return <SignupScreen onBackToLogin={() => setAuthMode("login")} />;
     if (authMode === "join") return <JoinScreen onBackToLogin={() => setAuthMode("login")} />;
-    return <LoginScreen onShowSignup={() => setAuthMode("signup")} onShowJoin={() => setAuthMode("join")} />;
+    if (authMode === "pricing") return <PricingScreen onBackToLogin={() => setAuthMode("login")} onShowSignup={() => setAuthMode("signup")} />;
+    return <LoginScreen onShowSignup={() => setAuthMode("signup")} onShowJoin={() => setAuthMode("join")} onShowPricing={() => setAuthMode("pricing")} />;
   }
   if (loadError) {
     return <FullScreenMessage title="Erreur" message={loadError} onLogout={handleLogout} />;
@@ -338,7 +365,55 @@ function WhatsAppSupportLink({ context, style, iconSize = 13, label = "Contacter
   </a>;
 }
 
-function LoginScreen({ onShowSignup, onShowJoin }) {
+// Cartes de tarification, réutilisées à la fois avant connexion (PricingScreen)
+// et depuis l'application pour un upgrade (PricingModal).
+function PricingCards({ ctaFor, currentPlan }) {
+  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+    {Object.entries(PLAN_PRICING).map(([planId, plan]) => {
+      const isCurrent = currentPlan === planId;
+      return <div key={planId} style={{ background: "#fff", borderRadius: 14, border: isCurrent ? "2px solid #1F6F4B" : `1px solid ${BORDER}`, padding: 20, position: "relative" }}>
+        {isCurrent && <div style={{ position: "absolute", top: -11, left: 16 }}><Badge text="Formule actuelle" bg="#1F6F4B" fg="#fff" /></div>}
+        <div style={{ fontWeight: 800, fontSize: 17, color: NAVY }}>{plan.label}</div>
+        <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 10 }}>{plan.tagline}</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: TEXT_DARK }}>{plan.price.toLocaleString("fr-FR")} <span style={{ fontSize: 13, fontWeight: 500, color: TEXT_MUTED }}>FCFA / mois</span></div>
+        <div style={{ margin: "14px 0", display: "grid", gap: 8 }}>
+          {plan.features.map((f) => <div key={f} style={{ display: "flex", gap: 8, fontSize: 12.5, color: TEXT_DARK }}>
+            <span style={{ color: "#1F6F4B", fontWeight: 800 }}>✓</span> {f}
+          </div>)}
+        </div>
+        {ctaFor === "upgrade" && !isCurrent && <WhatsAppSupportLink context={`upgrade vers la formule ${plan.label}`} label={`Passer à ${plan.label}`} style={{ color: "#1F6F4B", fontWeight: 700, justifyContent: "center", background: "#F1F2F6", borderRadius: 8, padding: "9px 0" }} iconSize={14} />}
+        {ctaFor === "upgrade" && isCurrent && <div style={{ textAlign: "center", fontSize: 12, color: TEXT_MUTED, padding: "9px 0" }}>Formule en cours</div>}
+      </div>;
+    })}
+  </div>;
+}
+
+function PricingScreen({ onBackToLogin, onShowSignup }) {
+  return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: NAVY, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif", padding: "40px 16px" }}>
+    <div style={{ textAlign: "center", marginBottom: 20 }}>
+      <div style={{ fontWeight: 800, fontSize: 22, color: "#fff" }}>Nos formules</div>
+      <div style={{ fontSize: 13, color: "#C7D0E8", marginTop: 4 }}>14 jours d'essai gratuit sur toutes les formules, sans engagement</div>
+    </div>
+    <div style={{ width: 640, maxWidth: "100%" }}>
+      <PricingCards ctaFor="none" />
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+        <Btn onClick={onShowSignup}>Démarrer l'essai gratuit</Btn>
+      </div>
+    </div>
+    <div style={{ textAlign: "center", marginTop: 20, fontSize: 12.5 }}>
+      <span onClick={onBackToLogin} style={{ color: "#9BAFC9", fontWeight: 700, cursor: "pointer" }}>Retour à la connexion</span>
+    </div>
+  </div>;
+}
+
+function PricingModal({ onClose, currentPlan }) {
+  return <Modal title="Nos formules" onClose={onClose} width={680}>
+    <div style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 16 }}>Pour changer de formule, contacte-nous sur WhatsApp — c'est instantané une fois le paiement confirmé.</div>
+    <PricingCards ctaFor="upgrade" currentPlan={currentPlan} />
+  </Modal>;
+}
+
+function LoginScreen({ onShowSignup, onShowJoin, onShowPricing }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -422,6 +497,9 @@ function LoginScreen({ onShowSignup, onShowJoin }) {
       </div>
       <div style={{ textAlign: "center", marginTop: 8, fontSize: 12.5, color: TEXT_MUTED }}>
         Un code d'invitation ? <span onClick={onShowJoin} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Rejoindre une entreprise</span>
+      </div>
+      <div style={{ textAlign: "center", marginTop: 8, fontSize: 12.5, color: TEXT_MUTED }}>
+        <span onClick={onShowPricing} style={{ color: "#1F6F4B", fontWeight: 700, cursor: "pointer" }}>Voir nos formules et tarifs</span>
       </div>
     </div>
     <GuideLink />
@@ -1691,6 +1769,7 @@ function StoresPage({ stores, run, busy, currentStoreId, account }) {
       alert("Impossible de supprimer ce magasin : il contient encore de l'inventaire ou des réservations. Vide-le d'abord.");
     });
   };
+  const [pricingModal, setPricingModal] = useState(false);
 
   return <div>
     <PageBanner icon={Store} title="Magasins" subtitle={isTrial ? `Essai gratuit — magasins illimités (${stores.length} actuellement)` : `Formule ${planLabel} — ${stores.length}/${limit === Infinity ? "∞" : limit} magasin(s)`} />
@@ -1701,11 +1780,13 @@ function StoresPage({ stores, run, busy, currentStoreId, account }) {
     }>&nbsp;</SectionTitle>
     {atLimit && limit !== Infinity && (
       <Card style={{ marginBottom: 16, background: "#FEFAEF", borderColor: "#F0DCA0" }}>
-        <div style={{ fontSize: 12.5, color: "#9A6A00" }}>
-          Ta formule actuelle ({planLabel}) est limitée à {limit} magasin{limit > 1 ? "s" : ""}. Contacte-nous pour passer à la formule Multi-magasins et en ajouter davantage.
+        <div style={{ fontSize: 12.5, color: "#9A6A00", marginBottom: 8 }}>
+          Ta formule actuelle ({planLabel}) est limitée à {limit} magasin{limit > 1 ? "s" : ""}.
         </div>
+        <Btn small variant="gold" onClick={() => setPricingModal(true)}>Voir les formules et upgrader</Btn>
       </Card>
     )}
+    {pricingModal && <PricingModal onClose={() => setPricingModal(false)} currentPlan={account.plan} />}
     <div style={{ display: "grid", gap: 10 }}>
       {stores.map((s) => <Card key={s.id}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
