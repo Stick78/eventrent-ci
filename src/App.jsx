@@ -71,6 +71,8 @@ const reservationBreakdown = (r) => {
 const reservationTotal = (r) => reservationBreakdown(r).total;
 const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const GUIDE_PDF_URL = "/guide-utilisation-eventrent-ci.pdf";
+const PLAN_STORE_LIMITS = { standard: 1, multi_magasin: Infinity };
+const PLAN_LABELS = { standard: "Standard", multi_magasin: "Multi-magasins" };
 
 // Contexte : rend l'accountId courant accessible à tous les composants sans prop drilling
 const AccountContext = createContext(null);
@@ -738,7 +740,7 @@ function TenantApp({ profile, account, daysLeft, onLogout }) {
           {tab === "drivers" && hasAccess("drivers") && <Drivers data={data} run={run} />}
           {tab === "settings" && hasAccess("settings") && <SettingsPage data={data} run={run} busy={busy} />}
           {tab === "users" && hasAccess("users") && <TeamPage data={data} run={run} profile={profile} stores={stores} />}
-          {tab === "stores" && hasAccess("stores") && <StoresPage stores={stores} run={runStores} busy={busy} currentStoreId={currentStoreId} />}
+          {tab === "stores" && hasAccess("stores") && <StoresPage stores={stores} run={runStores} busy={busy} currentStoreId={currentStoreId} account={account} />}
           {nav.length === 0 && <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Aucun module ne t'a été attribué. Contacte un administrateur.</div>}
         </div>
       </div>
@@ -1659,9 +1661,13 @@ function SettingsPage({ data, run, busy }) {
 }
 
 // ---------- Magasins ----------
-function StoresPage({ stores, run, busy, currentStoreId }) {
+function StoresPage({ stores, run, busy, currentStoreId, account }) {
   const accountId = useAccountId();
   const [modal, setModal] = useState(null);
+  const isTrial = account.status === "trial";
+  const limit = isTrial ? Infinity : (PLAN_STORE_LIMITS[account.plan] ?? 1);
+  const atLimit = stores.length >= limit;
+  const planLabel = PLAN_LABELS[account.plan] || "Standard";
 
   const remove = (store) => {
     if (stores.length <= 1) { alert("Impossible de supprimer le dernier magasin de l'entreprise."); return; }
@@ -1672,8 +1678,19 @@ function StoresPage({ stores, run, busy, currentStoreId }) {
   };
 
   return <div>
-    <PageBanner icon={Store} title="Magasins" subtitle="Chaque magasin a son propre inventaire et ses propres réservations" />
-    <SectionTitle action={<Btn icon={Plus} onClick={() => setModal({})}>Ajouter un magasin</Btn>}>&nbsp;</SectionTitle>
+    <PageBanner icon={Store} title="Magasins" subtitle={isTrial ? `Essai gratuit — magasins illimités (${stores.length} actuellement)` : `Formule ${planLabel} — ${stores.length}/${limit === Infinity ? "∞" : limit} magasin(s)`} />
+    <SectionTitle action={
+      atLimit
+        ? <Btn variant="ghost" disabled>🔒 Limite atteinte</Btn>
+        : <Btn icon={Plus} onClick={() => setModal({})}>Ajouter un magasin</Btn>
+    }>&nbsp;</SectionTitle>
+    {atLimit && limit !== Infinity && (
+      <Card style={{ marginBottom: 16, background: "#FEFAEF", borderColor: "#F0DCA0" }}>
+        <div style={{ fontSize: 12.5, color: "#9A6A00" }}>
+          Ta formule actuelle ({planLabel}) est limitée à {limit} magasin{limit > 1 ? "s" : ""}. Contacte-nous pour passer à la formule Multi-magasins et en ajouter davantage.
+        </div>
+      </Card>
+    )}
     <div style={{ display: "grid", gap: 10 }}>
       {stores.map((s) => <Card key={s.id}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1937,6 +1954,7 @@ function PlatformAdminApp({ profile, onLogout }) {
     run(() => db.updateAccountStatus(accountId, { status: "trial", trialEnd: d.toISOString().slice(0, 10) }));
   };
   const cancel = (accountId) => { if (confirm("Résilier ce compte ?")) run(() => db.updateAccountStatus(accountId, { status: "cancelled" })); };
+  const changePlan = (accountId, plan) => run(() => db.updateAccountPlan(accountId, plan));
   const remove = (account) => {
     const typed = prompt(`Suppression définitive et irréversible.\nToutes les données de "${account.companyName}" seront perdues.\n\nPour confirmer, retape exactement le nom de l'entreprise :`);
     if (typed === null) return;
@@ -1982,8 +2000,14 @@ function PlatformAdminApp({ profile, onLogout }) {
               <div>
                 <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>{a.companyName} {statusBadge(a.status)}</div>
                 <div style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 3 }}>
-                  Inscrit le {fmtDate(a.createdAt)} · Plan {a.plan}
+                  Inscrit le {fmtDate(a.createdAt)}
                   {a.status === "trial" && ` · ${daysLeft(a.trialEnd)} jour(s) d'essai restant(s)`}
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <select value={a.plan || "standard"} disabled={busy} onChange={(e) => changePlan(a.id, e.target.value)} style={{ ...inputStyle, width: "auto", fontSize: 12, padding: "4px 8px" }}>
+                    <option value="standard">Formule Standard (1 magasin)</option>
+                    <option value="multi_magasin">Formule Multi-magasins (illimité)</option>
+                  </select>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
