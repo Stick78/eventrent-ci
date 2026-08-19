@@ -18,6 +18,13 @@ export default async function handler(req, res) {
     return res.status(405).send("Méthode non autorisée");
   }
 
+  const requiredEnv = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "PAYDUNYA_MASTER_KEY", "PAYDUNYA_PRIVATE_KEY", "PAYDUNYA_PUBLIC_KEY", "PAYDUNYA_TOKEN"];
+  const missing = requiredEnv.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    console.error("paydunya-webhook: variables manquantes :", missing);
+    return res.status(500).send(`Configuration incomplète. Variable(s) manquante(s) : ${missing.join(", ")}`);
+  }
+
   try {
     const token = req.body?.data?.token || req.body?.token;
     if (!token) {
