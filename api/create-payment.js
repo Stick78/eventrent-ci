@@ -27,6 +27,20 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Méthode non autorisée" });
   }
 
+  // Vérification explicite des variables d'environnement : plutôt que de
+  // laisser planter la connexion à Supabase ou l'appel PayDunya sans
+  // explication, on dit précisément ce qui manque.
+  const requiredEnv = [
+    "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
+    "PAYDUNYA_MASTER_KEY", "PAYDUNYA_PRIVATE_KEY", "PAYDUNYA_PUBLIC_KEY", "PAYDUNYA_TOKEN",
+    "PUBLIC_SITE_URL",
+  ];
+  const missing = requiredEnv.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    console.error("create-payment: variables manquantes :", missing);
+    return res.status(500).json({ error: `Configuration incomplète côté serveur. Variable(s) manquante(s) : ${missing.join(", ")}` });
+  }
+
   try {
     const { accountId, plan } = req.body || {};
     if (!accountId || !PLAN_PRICING[plan]) {
