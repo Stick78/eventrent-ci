@@ -55,6 +55,7 @@ const mapAccount = (r) => ({
 const RESERVATION_SELECT = `
   id, client_id, driver_id, start_date, end_date, address, zone, seasonal, status,
   caution, caution_returned, checkout_photo_url, checkin_photo_url, discount_type, discount_value,
+  delivery_fee_override,
   clients ( name ),
   reservation_items ( id, item_id, qty, unit_price, damaged_qty, discount_type, discount_value, inventory ( name ) ),
   payments ( id, amount, mode, paid_at )
