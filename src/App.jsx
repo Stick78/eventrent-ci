@@ -241,6 +241,16 @@ export default function App() {
   const [loadError, setLoadError] = useState(null);
   const [authMode, setAuthMode] = useState("login"); // "login" | "signup" | "join"
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [paymentReturn, setPaymentReturn] = useState(null); // "return" | "cancelled" | null
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get("payment");
+    if (payment === "return" || payment === "cancelled") {
+      setPaymentReturn(payment);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     let sub;
@@ -254,6 +264,12 @@ export default function App() {
     })();
     return () => { if (sub) sub.unsubscribe(); };
   }, []);
+
+  const refreshAccount = useCallback(async () => {
+    if (!profile || profile.isPlatformAdmin || !profile.accountId) return;
+    const acc = await db.fetchAccount(profile.accountId);
+    setAccount(acc);
+  }, [profile]);
 
   useEffect(() => {
     if (session === undefined) return;
@@ -292,6 +308,12 @@ export default function App() {
   }
   if (!profile) {
     return <FullScreenLoader />;
+  }
+  if (paymentReturn) {
+    return <PaymentReturnScreen
+      status={paymentReturn}
+      onContinue={async () => { await refreshAccount(); setPaymentReturn(null); }}
+    />;
   }
   if (profile.isPlatformAdmin) {
     return <PlatformAdminApp profile={profile} onLogout={handleLogout} />;
@@ -368,6 +390,23 @@ function WhatsAppSupportLink({ context, style, iconSize = 13, label = "Contacter
 // Cartes de tarification, réutilisées à la fois avant connexion (PricingScreen)
 // et depuis l'application pour un upgrade (PricingModal).
 function PricingCards({ ctaFor, currentPlan }) {
+  const accountId = useAccountId();
+  const [payingPlan, setPayingPlan] = useState(null);
+  const [payError, setPayError] = useState({});
+
+  const payNow = async (planId) => {
+    setPayError((e) => ({ ...e, [planId]: "" }));
+    setPayingPlan(planId);
+    try {
+      const url = await db.initiatePayment(accountId, planId);
+      window.location.href = url;
+    } catch (e) {
+      console.error(e);
+      setPayError((prev) => ({ ...prev, [planId]: "Paiement Mobile Money pas encore disponible. Utilise WhatsApp en attendant." }));
+      setPayingPlan(null);
+    }
+  };
+
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
     {Object.entries(PLAN_PRICING).map(([planId, plan]) => {
       const isCurrent = currentPlan === planId;
@@ -381,7 +420,13 @@ function PricingCards({ ctaFor, currentPlan }) {
             <span style={{ color: "#1F6F4B", fontWeight: 800 }}>✓</span> {f}
           </div>)}
         </div>
-        {ctaFor === "upgrade" && !isCurrent && <WhatsAppSupportLink context={`upgrade vers la formule ${plan.label}`} label={`Passer à ${plan.label}`} style={{ color: "#1F6F4B", fontWeight: 700, justifyContent: "center", background: "#F1F2F6", borderRadius: 8, padding: "9px 0" }} iconSize={14} />}
+        {ctaFor === "upgrade" && !isCurrent && <div style={{ display: "grid", gap: 6 }}>
+          <Btn small disabled={payingPlan === planId} onClick={() => payNow(planId)} style={{ width: "100%", justifyContent: "center" }}>
+            {payingPlan === planId ? "Redirection..." : "Payer avec Mobile Money"}
+          </Btn>
+          {payError[planId] && <div style={{ fontSize: 11, color: "#B3261E" }}>{payError[planId]}</div>}
+          <WhatsAppSupportLink context={`upgrade vers la formule ${plan.label}`} label={`Ou demander à passer à ${plan.label}`} style={{ color: "#1F6F4B", fontWeight: 700, justifyContent: "center", background: "#F1F2F6", borderRadius: 8, padding: "9px 0" }} iconSize={14} />
+        </div>}
         {ctaFor === "upgrade" && isCurrent && <div style={{ textAlign: "center", fontSize: 12, color: TEXT_MUTED, padding: "9px 0" }}>Formule en cours</div>}
       </div>;
     })}
@@ -662,6 +707,30 @@ function JoinScreen({ onBackToLogin }) {
       </div>
     </div>
     <GuideLink />
+  </div>;
+}
+
+function PaymentReturnScreen({ status, onContinue }) {
+  const [checking, setChecking] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setChecking(false), 2500);
+    return () => clearTimeout(t);
+  }, []);
+  return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" }}>
+    <div style={{ background: "#fff", padding: 32, borderRadius: 12, width: 360, textAlign: "center" }}>
+      {status === "cancelled" ? <>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>✕</div>
+        <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>Paiement annulé</div>
+        <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 20 }}>Aucun montant n'a été débité. Tu peux réessayer à tout moment.</div>
+      </> : <>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>{checking ? "⏳" : "✅"}</div>
+        <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>{checking ? "Vérification du paiement..." : "C'est bon !"}</div>
+        <div style={{ fontSize: 13, color: TEXT_MUTED, marginBottom: 20 }}>
+          {checking ? "Merci, on confirme ton paiement auprès de PayDunya. Ça prend quelques secondes." : "Ton abonnement a été mis à jour si le paiement est confirmé. Si ce n'est pas encore le cas, patiente un instant et rafraîchis."}
+        </div>
+      </>}
+      <Btn disabled={checking && status !== "cancelled"} onClick={onContinue}>{checking && status !== "cancelled" ? "Patiente..." : "Continuer"}</Btn>
+    </div>
   </div>;
 }
 
