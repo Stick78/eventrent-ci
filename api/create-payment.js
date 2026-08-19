@@ -106,7 +106,9 @@ export default async function handler(req, res) {
 
     if (pdData.response_code !== "00" || !pdData.response_text) {
       await supabase.from("payment_transactions").update({ status: "failed" }).eq("id", tx.id);
-      return res.status(502).json({ error: "Échec de la création du paiement PayDunya", details: pdData });
+      console.error("PayDunya a refusé la création du paiement :", JSON.stringify(pdData));
+      const pdMessage = pdData.response_text || pdData.message || (pdData.errors ? JSON.stringify(pdData.errors) : null) || JSON.stringify(pdData);
+      return res.status(502).json({ error: `PayDunya : ${pdMessage}` });
     }
 
     // Mémorise le token PayDunya pour pouvoir vérifier le paiement plus tard
