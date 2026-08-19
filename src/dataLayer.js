@@ -493,6 +493,11 @@ export async function updateAccountStatus(accountId, { status, trialEnd }) {
   if (error) throw error;
 }
 
+export async function updateAccountPlan(accountId, plan) {
+  const { error } = await supabase.from("accounts").update({ plan }).eq("id", accountId);
+  if (error) throw error;
+}
+
 export async function deleteAccount(accountId) {
   // Supprime toutes les données du compte, dans l'ordre (enfants avant parents)
   const tables = [
@@ -506,6 +511,18 @@ export async function deleteAccount(accountId) {
   }
   const { error: eAcc } = await supabase.from("accounts").delete().eq("id", accountId);
   if (eAcc) throw eAcc;
+}
+
+// ---------- paiement (PayDunya, via nos fonctions serveur Vercel) ----------
+export async function initiatePayment(accountId, plan) {
+  const res = await fetch("/api/create-payment", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, plan }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Erreur lors de la création du paiement");
+  return data.paymentUrl;
 }
 
 export async function fetchPlatformSettings() {
