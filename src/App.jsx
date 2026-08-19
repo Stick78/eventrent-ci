@@ -402,7 +402,7 @@ function PricingCards({ ctaFor, currentPlan }) {
       window.location.href = url;
     } catch (e) {
       console.error(e);
-      setPayError((prev) => ({ ...prev, [planId]: "Paiement Mobile Money pas encore disponible. Utilise WhatsApp en attendant." }));
+      setPayError((prev) => ({ ...prev, [planId]: e.message || "Paiement Mobile Money pas encore disponible. Utilise WhatsApp en attendant." }));
       setPayingPlan(null);
     }
   };
