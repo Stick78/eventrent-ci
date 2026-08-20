@@ -108,7 +108,19 @@ export default async function handler(req, res) {
       await supabase.from("payment_transactions").update({ status: "failed" }).eq("id", tx.id);
       console.error("PayDunya a refusé la création du paiement :", JSON.stringify(pdData));
       const pdMessage = pdData.response_text || pdData.message || (pdData.errors ? JSON.stringify(pdData.errors) : null) || JSON.stringify(pdData);
-      return res.status(502).json({ error: `PayDunya : ${pdMessage}` });
+
+      // Diagnostic temporaire (aucun risque : on n'affiche jamais la clé,
+      // seulement sa longueur et ses 2 premiers/derniers caractères) pour
+      // savoir si une clé est vide, tronquée, ou contient un caractère en trop
+      // (espace, retour à la ligne) sans avoir à fouiller les logs Vercel.
+      const preview = (key) => {
+        if (!key) return "VIDE";
+        const clean = String(key);
+        return `${clean.slice(0, 2)}...${clean.slice(-2)} (longueur: ${clean.length})`;
+      };
+      const diag = `[diag: master=${preview(process.env.PAYDUNYA_MASTER_KEY)}, private=${preview(process.env.PAYDUNYA_PRIVATE_KEY)}, public=${preview(process.env.PAYDUNYA_PUBLIC_KEY)}, token=${preview(process.env.PAYDUNYA_TOKEN)}]`;
+
+      return res.status(502).json({ error: `PayDunya : ${pdMessage} ${diag}` });
     }
 
     // Mémorise le token PayDunya pour pouvoir vérifier le paiement plus tard
