@@ -323,7 +323,7 @@ export default function App() {
   }
 
   const daysLeft = Math.ceil((new Date(account.trialEnd) - new Date()) / (1000 * 60 * 60 * 24));
-  const isBlocked = account.status === "cancelled" || account.status === "expired" || (account.status === "trial" && daysLeft < 0);
+  const isBlocked = !account.isFree && (account.status === "cancelled" || account.status === "expired" || (account.status === "trial" && daysLeft < 0));
   if (isBlocked) {
     return <TrialExpiredScreen account={account} onLogout={handleLogout} />;
   }
@@ -1827,7 +1827,7 @@ function StoresPage({ stores, run, busy, currentStoreId, account }) {
   const accountId = useAccountId();
   const [modal, setModal] = useState(null);
   const isTrial = account.status === "trial";
-  const limit = isTrial ? Infinity : (PLAN_STORE_LIMITS[account.plan] ?? 1);
+  const limit = (isTrial || account.isFree) ? Infinity : (PLAN_STORE_LIMITS[account.plan] ?? 1);
   const atLimit = stores.length >= limit;
   const planLabel = PLAN_LABELS[account.plan] || "Standard";
 
@@ -1841,7 +1841,7 @@ function StoresPage({ stores, run, busy, currentStoreId, account }) {
   const [pricingModal, setPricingModal] = useState(false);
 
   return <div>
-    <PageBanner icon={Store} title="Magasins" subtitle={isTrial ? `Essai gratuit — magasins illimités (${stores.length} actuellement)` : `Formule ${planLabel} — ${stores.length}/${limit === Infinity ? "∞" : limit} magasin(s)`} />
+    <PageBanner icon={Store} title="Magasins" subtitle={account.isFree ? `Compte gratuit — magasins illimités (${stores.length} actuellement)` : isTrial ? `Essai gratuit — magasins illimités (${stores.length} actuellement)` : `Formule ${planLabel} — ${stores.length}/${limit === Infinity ? "∞" : limit} magasin(s)`} />
     <SectionTitle action={
       atLimit
         ? <Btn variant="ghost" disabled>🔒 Limite atteinte</Btn>
@@ -2114,6 +2114,11 @@ function PlatformAdminApp({ profile, onLogout }) {
   };
 
   const activate = (accountId) => run(() => db.updateAccountStatus(accountId, { status: "active" }));
+  const toggleFree = (account) => {
+    const next = !account.isFree;
+    if (next && !confirm(`Rendre le compte "${account.companyName}" gratuit ? Il aura un accès illimité sans jamais être bloqué, quel que soit son statut ou son essai.`)) return;
+    run(() => db.updateAccountFree(account.id, next));
+  };
   const extendTrial = (accountId) => {
     const d = new Date(); d.setDate(d.getDate() + 14);
     run(() => db.updateAccountStatus(accountId, { status: "trial", trialEnd: d.toISOString().slice(0, 10) }));
@@ -2163,7 +2168,7 @@ function PlatformAdminApp({ profile, onLogout }) {
           {accounts.map((a) => <Card key={a.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
               <div>
-                <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>{a.companyName} {statusBadge(a.status)}</div>
+                <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>{a.companyName} {statusBadge(a.status)} {a.isFree && <Badge text="Gratuit" bg="#E3EEFB" fg="#1D5A9E" />}</div>
                 <div style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 3 }}>
                   Inscrit le {fmtDate(a.createdAt)}
                   {a.status === "trial" && ` · ${daysLeft(a.trialEnd)} jour(s) d'essai restant(s)`}
@@ -2178,6 +2183,7 @@ function PlatformAdminApp({ profile, onLogout }) {
               <div style={{ display: "flex", gap: 8 }}>
                 {a.status !== "active" && <Btn small disabled={busy} onClick={() => activate(a.id)}>Activer</Btn>}
                 {a.status === "trial" && <Btn small variant="ghost" disabled={busy} onClick={() => extendTrial(a.id)}>Prolonger l'essai</Btn>}
+                <Btn small variant={a.isFree ? "danger" : "ghost"} disabled={busy} onClick={() => toggleFree(a)}>{a.isFree ? "Retirer la gratuité" : "Rendre gratuit"}</Btn>
                 {a.status !== "cancelled" && <Btn small variant="danger" disabled={busy} onClick={() => cancel(a.id)}>Résilier</Btn>}
                 {a.id !== "11111111-1111-1111-1111-111111111111" && <Btn small variant="danger" disabled={busy} onClick={() => remove(a)}>Supprimer</Btn>}
               </div>
