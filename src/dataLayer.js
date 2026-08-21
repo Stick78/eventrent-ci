@@ -49,6 +49,7 @@ const mapAccount = (r) => ({
   trialEnd: r.trial_end,
   status: r.subscription_status,
   plan: r.plan,
+  isFree: !!r.is_free,
   createdAt: r.created_at ? r.created_at.slice(0, 10) : null,
 });
 
@@ -496,6 +497,11 @@ export async function updateAccountStatus(accountId, { status, trialEnd }) {
 
 export async function updateAccountPlan(accountId, plan) {
   const { error } = await supabase.from("accounts").update({ plan }).eq("id", accountId);
+  if (error) throw error;
+}
+
+export async function updateAccountFree(accountId, isFree) {
+  const { error } = await supabase.from("accounts").update({ is_free: isFree }).eq("id", accountId);
   if (error) throw error;
 }
 
